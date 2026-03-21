@@ -2,12 +2,14 @@ package org.team12.teamproject.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import java.io.Serializable;
+import java.util.Objects;
 
 @Entity 
 @Table(name = "stocks") // 오라클에 생성될 실제 테이블 이름
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class Stock {
+public class Stock implements Serializable {
 
     @Id 
     @Column(name = "symbol", length = 20, nullable = false)
@@ -22,5 +24,18 @@ public class Stock {
     public Stock(String symbol, String name) {
         this.symbol = symbol;
         this.name = name;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Stock stock = (Stock) o;
+        return Objects.equals(symbol, stock.symbol);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(symbol);
     }
 }
