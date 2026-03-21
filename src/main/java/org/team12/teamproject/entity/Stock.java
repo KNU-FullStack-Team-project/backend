@@ -8,7 +8,7 @@ import java.time.LocalDateTime;
 @Table(name = "stocks")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class Stock {
+public class Stock implements Serializable {
 
     @Id
     @GeneratedValue(strategy = GenerationType.SEQUENCE)
@@ -37,5 +37,18 @@ public class Stock {
         this.marketType = marketType;
         this.isActive = isActive;
         this.createdAt = createdAt;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Stock stock = (Stock) o;
+        return Objects.equals(symbol, stock.symbol);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(symbol);
     }
 }
