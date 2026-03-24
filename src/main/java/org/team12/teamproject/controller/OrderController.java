@@ -18,10 +18,15 @@ public class OrderController {
     public ResponseEntity<?> createOrder(@RequestBody OrderRequestDto req) {
         try {
             Order order;
-            if ("MARKET".equalsIgnoreCase(req.getOrderType())) {
-                order = orderService.placeMarketBuyOrder(req.getAccountId(), req.getStockCode(), req.getQuantity());
+            if ("BUY".equalsIgnoreCase(req.getOrderSide())) {
+                if ("MARKET".equalsIgnoreCase(req.getOrderType())) {
+                    order = orderService.placeMarketBuyOrder(req.getAccountId(), req.getStockCode(), req.getQuantity());
+                } else {
+                    order = orderService.placeLimitBuyOrder(req.getAccountId(), req.getStockCode(), req.getQuantity(), req.getPrice());
+                }
             } else {
-                order = orderService.placeLimitBuyOrder(req.getAccountId(), req.getStockCode(), req.getQuantity(), req.getPrice());
+                // SELL인 경우 (현재 MARKET SELL만 구현됨)
+                order = orderService.placeMarketSellOrder(req.getAccountId(), req.getStockCode(), req.getQuantity());
             }
             return ResponseEntity.ok().body("Order placed successfully. Status: " + order.getOrderStatus());
         } catch (Exception e) {

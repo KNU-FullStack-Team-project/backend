@@ -11,5 +11,6 @@ public class OrderRequestDto {
     private String stockCode;
     private Long quantity;
     private String orderType; // MARKET, LIMIT
+    private String orderSide; // BUY, SELL
     private BigDecimal price; // LIMIT 일때만
 }

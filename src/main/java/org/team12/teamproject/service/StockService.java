@@ -4,9 +4,7 @@ import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
@@ -15,8 +13,8 @@ import org.team12.teamproject.dto.StockResponseDto;
 import org.team12.teamproject.entity.Stock;
 import org.team12.teamproject.repository.StockRepository;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
-
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,7 +25,8 @@ import java.util.Map;
 public class StockService {
 
     private final RestTemplate restTemplate = new RestTemplate();
-    private final StockRepository stockRepository; // DB와 통신할 레포지토리
+    private final StockRepository stockRepository;
+    private final RedisTemplate<String, String> redisTemplate;
 
     @Value("${kis.api.url}")
     private String apiUrl;
@@ -38,7 +37,6 @@ public class StockService {
 
     private String cachedAccessToken = null;
 
-    // [테스트 편의용] 서버가 켜질 때 DB가 비어있으면 주식 3개를 자동으로 넣어줍니다.
     @PostConstruct
     public void initDummyData() {
         if (stockRepository.count() == 0) {
@@ -78,57 +76,62 @@ public class StockService {
         }
     }
 
-    // =====================================================================
-    // [1] 리스트 조회 (페이징 적용)
-    // =====================================================================
     public PageResponseDto<StockResponseDto> getStockList(int page, int size) {
-        Pageable pageable = PageRequest.of(page - 1, size);
-        Page<Stock> stockPage = stockRepository.findAll(pageable);
+        int lower = (page - 1) * size;
+        int upper = page * size;
+        List<Stock> stockList = stockRepository.findStocksNative(lower, upper);
+        long totalElements = stockRepository.count();
+        int totalPages = (int) Math.ceil((double) totalElements / size);
 
-        List<StockResponseDto> content = stockPage.getContent().stream().map(stock -> {
-            String price = fetchPriceFromKisApi(stock.getStockCode());
-            
-            return StockResponseDto.builder()
-                    .symbol(stock.getStockCode())
-                    .name(stock.getStockName())
-                    .currentPrice(price != null ? price : "조회실패")
-                    .build();
+        List<StockResponseDto> content = stockList.stream().map(stock -> {
+            return getStockDetail(stock.getStockCode());
         }).toList();
 
         return PageResponseDto.<StockResponseDto>builder()
                 .content(content)
                 .currentPage(page)
-                .totalPages(stockPage.getTotalPages())
-                .totalElements((int) stockPage.getTotalElements())
+                .totalPages(totalPages)
+                .totalElements((int) totalElements)
                 .build();
     }
 
-    // =====================================================================
-    // [2] 단일 종목 상세 조회
-    // =====================================================================
     public StockResponseDto getStockDetail(String symbol) {
-        // DB에서 종목 이름 꺼내오기 (없으면 "이름없음" 처리)
-        String stockName = stockRepository.findByStockCode(symbol)
-                .map(Stock::getStockName)
-                .orElse("이름없음");
+        String cacheKey = "stock:price:" + symbol;
+        try {
+            String cachedData = redisTemplate.opsForValue().get(cacheKey);
+            if (cachedData != null) {
+                String[] parts = cachedData.split(":");
+                return StockResponseDto.builder()
+                        .symbol(symbol)
+                        .name(stockRepository.findByStockCode(symbol).map(Stock::getStockName).orElse("이름없음"))
+                        .currentPrice(parts[0])
+                        .changeAmount(parts[1])
+                        .changeRate(parts[2])
+                        .volume(parts[3])
+                        .build();
+            }
+        } catch (Exception e) {
+            log.warn("Redis 캐시 확인 실패 (서버 미구동 등): {}", e.getMessage());
+        }
 
-        String fetchedPrice = fetchPriceFromKisApi(symbol);
+        StockResponseDto dto = fetchPriceFromKisApi(symbol);
 
-        if (fetchedPrice == null) {
+        if (dto == null) {
             throw new RuntimeException("종목 데이터를 불러올 수 없습니다.");
         }
 
-        return StockResponseDto.builder()
-                .symbol(symbol)
-                .name(stockName)
-                .currentPrice(fetchedPrice)
-                .build();
+        try {
+            String valueToCache = String.format("%s:%s:%s:%s", 
+                    dto.getCurrentPrice(), dto.getChangeAmount(), dto.getChangeRate(), dto.getVolume());
+            redisTemplate.opsForValue().set(cacheKey, valueToCache, Duration.ofSeconds(60));
+        } catch (Exception e) {
+            log.warn("Redis 캐시 저장 실패 (서버 미구동 등): {}", e.getMessage());
+        }
+
+        return dto;
     }
 
-    // =====================================================================
-    // [3] KIS API 현재가 조회 로직
-    // =====================================================================
-    private String fetchPriceFromKisApi(String symbol) {
+    private StockResponseDto fetchPriceFromKisApi(String symbol) {
         try {
             if (cachedAccessToken == null) {
                 issueAccessToken();
@@ -148,7 +151,19 @@ public class StockService {
 
             if (response.getBody() != null && response.getBody().containsKey("output")) {
                 Map<String, Object> output = (Map<String, Object>) response.getBody().get("output");
-                return (String) output.get("stck_prpr");
+                
+                String stockName = stockRepository.findByStockCode(symbol)
+                        .map(Stock::getStockName)
+                        .orElse("이름없음");
+
+                return StockResponseDto.builder()
+                        .symbol(symbol)
+                        .name(stockName)
+                        .currentPrice((String) output.get("stck_prpr"))
+                        .changeAmount((String) output.get("prdy_vrss"))
+                        .changeRate((String) output.get("prdy_ctrt"))
+                        .volume((String) output.get("acml_vol"))
+                        .build();
             }
             return null;
         } catch (Exception e) {
@@ -157,9 +172,6 @@ public class StockService {
         }
     }
 
-    // =====================================================================
-    // [4] KIS API 토큰 발급 로직
-    // =====================================================================
     private void issueAccessToken() {
         String tokenUrl = apiUrl + "/oauth2/tokenP";
         HttpHeaders headers = new HttpHeaders();

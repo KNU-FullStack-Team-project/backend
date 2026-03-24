@@ -3,6 +3,9 @@ package org.team12.teamproject.entity;
 import jakarta.persistence.*;
 import lombok.*;
 import java.time.LocalDateTime;
+import java.io.Serializable;
+import java.util.Objects;
+
 
 @Entity
 @Table(name = "stocks")
@@ -44,11 +47,11 @@ public class Stock implements Serializable {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         Stock stock = (Stock) o;
-        return Objects.equals(symbol, stock.symbol);
+        return Objects.equals(stockCode, stock.stockCode);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(symbol);
+        return Objects.hash(stockCode);
     }
 }

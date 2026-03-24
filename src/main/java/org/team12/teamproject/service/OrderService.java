@@ -26,8 +26,10 @@ public class OrderService {
     private final AccountRepository accountRepository;
     private final StockRepository stockRepository;
     private final HoldingRepository holdingRepository;
-    private final StockService stockService; // KIS API 조회용
+    private final StockService stockService;
     private final RedisTemplate<String, String> redisTemplate;
+
+    private static final String ORDER_QUEUE_KEY = "orders:queue";
 
     /**
      * 주식 시장가 구매 로직
@@ -49,7 +51,7 @@ public class OrderService {
         // 3. 계좌 잔액 확인 및 차감
         account.deductBalance(totalAmount);
 
-        // 4. 주문 생성 (COMPLETED 처리)
+        // 4. 주문 생성 (QUEUED 처리)
         Order order = Order.builder()
                 .account(account)
                 .stock(stock)
@@ -57,27 +59,65 @@ public class OrderService {
                 .orderType("MARKET")
                 .quantity(quantity)
                 .price(currentPrice)
-                .remainingQuantity(0L)
-                .orderStatus("COMPLETED")
+                .remainingQuantity(quantity)
+                .orderStatus("QUEUED")
                 .orderedAt(LocalDateTime.now())
                 .build();
         orderRepository.save(order);
 
-        // 5. 포트폴리오(Holding) 추가
-        Holding holding = holdingRepository.findByAccountIdAndStockId(accountId, stock.getId())
-                .orElseGet(() -> Holding.builder()
-                        .account(account)
-                        .stock(stock)
-                        .quantity(0L)
-                        .averageBuyPrice(BigDecimal.ZERO)
-                        .updatedAt(LocalDateTime.now())
-                        .build());
-        
-        holding.addQuantity(quantity, currentPrice);
-        holdingRepository.save(holding);
+        // 5. Redis Queue에 주문 정보 푸시 (비동기 처리를 위해)
+        try {
+            redisTemplate.opsForList().rightPush(ORDER_QUEUE_KEY, "MARKET_BUY:" + order.getId());
+        } catch (Exception e) {
+            log.warn("Redis 주문 큐 푸시 실패: {}", e.getMessage());
+        }
 
-        // 6. Redis에 거래 상태 로깅 또는 캐싱 (예시)
-        redisTemplate.opsForList().rightPush("orders:completed:" + stockCode, order.getId().toString());
+        return order;
+    }
+
+    /**
+     * 주식 시장가 매도 로직
+     */
+    @Transactional
+    public Order placeMarketSellOrder(Long accountId, String stockCode, Long quantity) {
+        // 1. 엔티티 조회
+        Account account = accountRepository.findById(accountId)
+                .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+        Stock stock = stockRepository.findByStockCode(stockCode)
+                .orElseThrow(() -> new IllegalArgumentException("Stock not found"));
+
+        // 2. 보유 수량 검증
+        Holding holding = holdingRepository.findByAccountIdAndStockId(accountId, stock.getId())
+                .orElseThrow(() -> new IllegalArgumentException("보유 중인 주식이 없습니다."));
+        
+        if (holding.getQuantity() < quantity) {
+            throw new IllegalArgumentException("보유 수량이 부족합니다.");
+        }
+
+        // 3. KIS 최신 현재가 조회
+        String currentPriceStr = stockService.getStockDetail(stockCode).getCurrentPrice();
+        BigDecimal currentPrice = new BigDecimal(currentPriceStr);
+
+        // 4. 주문 생성 (PENDING or QUEUED)
+        Order order = Order.builder()
+                .account(account)
+                .stock(stock)
+                .orderSide("SELL")
+                .orderType("MARKET")
+                .quantity(quantity)
+                .price(currentPrice)
+                .remainingQuantity(quantity)
+                .orderStatus("QUEUED")
+                .orderedAt(LocalDateTime.now())
+                .build();
+        orderRepository.save(order);
+
+        // 5. Redis Queue에 주문 정보 푸시
+        try {
+            redisTemplate.opsForList().rightPush(ORDER_QUEUE_KEY, "MARKET_SELL:" + order.getId());
+        } catch (Exception e) {
+            log.warn("Redis 주문 큐 푸시 실패: {}", e.getMessage());
+        }
 
         return order;
     }
@@ -116,5 +156,58 @@ public class OrderService {
         redisTemplate.opsForZSet().add(redisKey, order.getId().toString(), limitPrice.doubleValue());
 
         return order;
+    }
+
+    /**
+     * Redis Queue에서 꺼낸 주문을 실제 체결 처리 (비동기 워커가 호출)
+     */
+    @Transactional
+    public void processOrder(String queueData) {
+        String[] parts = queueData.split(":");
+        String type = parts[0]; // MARKET_BUY, MARKET_SELL 등
+        Long orderId = Long.parseLong(parts[1]);
+
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new IllegalArgumentException("Order not found: " + orderId));
+
+        if (!"QUEUED".equals(order.getOrderStatus()) && !"PENDING".equals(order.getOrderStatus())) {
+            return; // 이미 처리된 주문
+        }
+
+        if ("MARKET_BUY".equals(type)) {
+            // 매수 체결: Holding 추가
+            Holding holding = holdingRepository.findByAccountIdAndStockId(order.getAccount().getId(), order.getStock().getId())
+                    .orElseGet(() -> Holding.builder()
+                            .account(order.getAccount())
+                            .stock(order.getStock())
+                            .quantity(0L)
+                            .averageBuyPrice(BigDecimal.ZERO)
+                            .updatedAt(LocalDateTime.now())
+                            .build());
+            
+            holding.addQuantity(order.getQuantity(), order.getPrice());
+            holdingRepository.save(holding);
+            
+            order.updateStatus("COMPLETED");
+            log.info("매수 주문 체결 완료: OrderID={}", orderId);
+
+        } else if ("MARKET_SELL".equals(type)) {
+            // 매도 체결: Account 잔액 증가, Holding 차감
+            Account account = order.getAccount();
+            BigDecimal totalAmount = order.getPrice().multiply(BigDecimal.valueOf(order.getQuantity()));
+            account.addBalance(totalAmount);
+            accountRepository.save(account);
+
+            Holding holding = holdingRepository.findByAccountIdAndStockId(account.getId(), order.getStock().getId())
+                    .orElseThrow(() -> new IllegalStateException("보유 주식 데이터가 없습니다."));
+            
+            holding.deductQuantity(order.getQuantity());
+            holdingRepository.save(holding);
+
+            order.updateStatus("COMPLETED");
+            log.info("매도 주문 체결 완료: OrderID={}", orderId);
+        }
+        
+        orderRepository.save(order);
     }
 }
