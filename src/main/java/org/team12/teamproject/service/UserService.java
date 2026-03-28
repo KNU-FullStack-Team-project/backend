@@ -23,11 +23,11 @@ public class UserService {
             return "이메일 인증을 먼저 완료해주세요.";
         }
 
-        if (userRepository.existsByEmail(dto.getEmail())) {
+        if (userRepository.countByEmail(dto.getEmail()) > 0) {
             return "이미 사용 중인 이메일입니다.";
         }
 
-        if (userRepository.existsByNickname(dto.getNickname())) {
+        if (userRepository.countByNickname(dto.getNickname()) > 0) {
             return "이미 사용 중인 닉네임입니다.";
         }
 
