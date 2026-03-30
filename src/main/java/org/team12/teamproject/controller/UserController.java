@@ -2,6 +2,7 @@ package org.team12.teamproject.controller;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
+import org.team12.teamproject.dto.LoginRequestDto;
 import org.team12.teamproject.dto.SignupRequestDto;
 import org.team12.teamproject.service.UserService;
 
@@ -16,5 +17,9 @@ public class UserController {
     @PostMapping("/signup")
     public String signup(@RequestBody SignupRequestDto dto) {
         return userService.signup(dto);
+    }
+    @PostMapping("/login")
+    public String login(@RequestBody LoginRequestDto dto) {
+        return userService.login(dto);
     }
 }
