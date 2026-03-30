@@ -15,9 +15,13 @@ import org.team12.teamproject.repository.StockRepository;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
+import org.team12.teamproject.dto.StockCandleDto;
 
 @Slf4j
 @Service
@@ -131,11 +135,80 @@ public class StockService {
         return dto;
     }
 
+    /**
+     * 주식 캔들 데이터(일봉) 조회
+     */
+    public List<StockCandleDto> getStockHistory(String symbol) {
+        try {
+            ensureAccessToken();
+
+            LocalDateTime now = LocalDateTime.now();
+            String endDate = now.format(DateTimeFormatter.ofPattern("YYYYMMDD"));
+            String startDate = now.minusDays(30).format(DateTimeFormatter.ofPattern("YYYYMMDD"));
+
+            String url = apiUrl + "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
+                    + "?FID_COND_MRKT_DIV_CODE=J"
+                    + "&FID_INPUT_ISCD=" + symbol
+                    + "&FID_INPUT_DATE_1=" + startDate
+                    + "&FID_INPUT_DATE_2=" + endDate
+                    + "&FID_PERIOD_DIV_CODE=D"
+                    + "&FID_ORG_ADJ_PRC=0";
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.set("authorization", "Bearer " + cachedAccessToken);
+            headers.set("appkey", appKey);
+            headers.set("appsecret", appSecret);
+            headers.set("tr_id", "FHKST03010100"); // 국내주식 기간별 시세(일/주/월)
+
+            HttpEntity<String> entity = new HttpEntity<>(headers);
+            ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
+
+            if (response.getBody() != null && response.getBody().containsKey("output2")) {
+                List<Map<String, Object>> output2 = (List<Map<String, Object>>) response.getBody().get("output2");
+                return output2.stream().map(data -> StockCandleDto.builder()
+                        .date((String) data.get("stck_bsop_date"))
+                        .open((String) data.get("stck_oprc"))
+                        .high((String) data.get("stck_hgpr"))
+                        .low((String) data.get("stck_lwpr"))
+                        .close((String) data.get("stck_clpr"))
+                        .volume((String) data.get("acml_vol"))
+                        .build())
+                        .collect(Collectors.toList());
+            }
+        } catch (org.springframework.web.client.HttpClientErrorException.Unauthorized e) {
+            log.warn("KIS 토큰 만료 또는 무효(401). 캔들 데이터 조회 재시도합니다.");
+            clearTokenCache();
+            return getStockHistory(symbol); // 1회 재시도
+        } catch (Exception e) {
+            log.error("캔들 데이터 조회 에러: {}", e.getMessage());
+        }
+        return new ArrayList<>();
+    }
+
+    private void ensureAccessToken() {
+        if (cachedAccessToken == null) {
+            // 1. Redis에서 토큰 확인 (AppKey별로 별도 관리하여 개발자간 간섭 방지)
+            String redisKey = "kis:access_token:" + appKey;
+            try {
+                String token = redisTemplate.opsForValue().get(redisKey);
+                if (token != null) {
+                    this.cachedAccessToken = token;
+                    log.info("Redis에서 기존 KIS 토큰 로드 완료 (AppKey: {}...)", appKey.substring(0, 5));
+                    return;
+                }
+            } catch (Exception e) {
+                log.warn("Redis 토큰 조회 실패: {}", e.getMessage());
+            }
+
+            // 2. 없으면 새로 발급
+            issueAccessToken();
+        }
+    }
+
     private StockResponseDto fetchPriceFromKisApi(String symbol) {
         try {
-            if (cachedAccessToken == null) {
-                issueAccessToken();
-            }
+            ensureAccessToken();
 
             String url = apiUrl + "/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=" + symbol;
 
@@ -166,9 +239,22 @@ public class StockService {
                         .build();
             }
             return null;
+        } catch (org.springframework.web.client.HttpClientErrorException.Unauthorized e) {
+            log.warn("KIS 토큰 만료 또는 무효(401). 토큰 재발급 후 재시도합니다.");
+            clearTokenCache();
+            return fetchPriceFromKisApi(symbol); // 1회 재시도
         } catch (Exception e) {
             log.error("API 호출 에러: {}", e.getMessage());
             return null;
+        }
+    }
+
+    private void clearTokenCache() {
+        this.cachedAccessToken = null;
+        try {
+            redisTemplate.delete("kis:access_token:" + appKey);
+        } catch (Exception e) {
+            log.warn("Redis 토큰 삭제 실패: {}", e.getMessage());
         }
     }
 
@@ -186,7 +272,16 @@ public class StockService {
         ResponseEntity<Map> response = restTemplate.postForEntity(tokenUrl, request, Map.class);
 
         if (response.getBody() != null) {
-            this.cachedAccessToken = (String) response.getBody().get("access_token");
+            String token = (String) response.getBody().get("access_token");
+            this.cachedAccessToken = token;
+            
+            String redisKey = "kis:access_token:" + appKey;
+            try {
+                redisTemplate.opsForValue().set(redisKey, token, Duration.ofHours(23));
+                log.info("새 KIS 액세스 토큰 발급 및 Redis 저장 완료 (AppKey: {}...)", appKey.substring(0, 5));
+            } catch (Exception e) {
+                log.warn("Redis에 토큰 저장 실패: {}", e.getMessage());
+            }
         }
     }
 }

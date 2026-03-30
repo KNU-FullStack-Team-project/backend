@@ -70,6 +70,11 @@ public class Order {
         this.orderStatus = newStatus;
     }
 
+    public void cancel() {
+        this.orderStatus = "CANCELED";
+        this.canceledAt = LocalDateTime.now();
+    }
+
     public void deductRemaining(Long amount) {
         if (this.remainingQuantity < amount) {
             throw new IllegalArgumentException("Cannot deduct more than remaining.");

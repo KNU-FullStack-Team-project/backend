@@ -8,6 +8,5 @@ import java.util.List;
 
 public interface OrderRepository extends JpaRepository<Order, Long> {
 
-    @Query(value = "SELECT * FROM orders WHERE account_id = :accountId", nativeQuery = true)
-    List<Order> findByAccountId(@Param("accountId") Long accountId);
+    List<Order> findByAccountIdOrderByOrderedAtDesc(Long accountId);
 }

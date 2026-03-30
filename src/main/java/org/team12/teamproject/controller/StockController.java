@@ -34,4 +34,12 @@ public class StockController {
         StockResponseDto response = stockService.getStockDetail(symbol);
         return ResponseEntity.ok(response);
     }
+
+    // =========================================================
+    // 3. 종목별 캔들 데이터 조회 (추가됨)
+    // =========================================================
+    @GetMapping("/{symbol}/history")
+    public ResponseEntity<?> getStockHistory(@PathVariable String symbol) {
+        return ResponseEntity.ok(stockService.getStockHistory(symbol));
+    }
 }
