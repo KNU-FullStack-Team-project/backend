@@ -16,7 +16,7 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final EmailService emailService;
-    private final PasswordEncoder passwordEncoder; // 추가
+    private final PasswordEncoder passwordEncoder;
 
     public String signup(SignupRequestDto dto) {
 
@@ -36,7 +36,7 @@ public class UserService {
 
         User user = User.builder()
                 .email(dto.getEmail())
-                .passwordHash(encodedPassword) // 암호화된 비밀번호 저장
+                .passwordHash(encodedPassword)
                 .nickname(dto.getNickname())
                 .profileImageUrl(null)
                 .role("USER")
@@ -52,10 +52,11 @@ public class UserService {
 
         return "회원가입 완료";
     }
+
     public String login(LoginRequestDto dto) {
 
         User user = userRepository.findByEmail(dto.getEmail())
-                    .orElse(null);
+                .orElse(null);
 
         if (user == null) {
             return "존재하지 않는 이메일입니다.";
@@ -66,5 +67,17 @@ public class UserService {
         }
 
         return "로그인 성공";
+    }
+
+    public String checkEmail(String email) {
+        if (email == null || email.trim().isEmpty()) {
+            return "이메일을 입력해주세요.";
+        }
+
+        if (userRepository.countByEmail(email.trim()) > 0) {
+            return "이미 사용 중인 이메일입니다.";
+        }
+
+        return "사용 가능한 이메일입니다.";
     }
 }

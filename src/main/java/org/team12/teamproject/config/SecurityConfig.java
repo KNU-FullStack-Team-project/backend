@@ -20,7 +20,12 @@ public class SecurityConfig {
         http
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/email/**", "/users/signup").permitAll()
+                        .requestMatchers(
+                                "/email/**",
+                                "/users/signup",
+                                "/users/login",
+                                "/users/check-email"
+                        ).permitAll()
                         .anyRequest().permitAll()
                 )
                 .formLogin(form -> form.disable());
