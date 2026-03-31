@@ -62,10 +62,10 @@ public class UserService {
     public LoginResponseDto login(LoginRequestDto dto) {
 
         User user = userRepository.findByEmail(dto.getEmail().trim().toLowerCase())
-                .orElseThrow(() -> new RuntimeException("존재하지 않는 이메일입니다."));
+                .orElseThrow(() -> new RuntimeException("회원정보가 일치하지 않습니다."));
 
         if (!matchesPassword(dto.getPassword(), user.getPasswordHash())) {
-            throw new RuntimeException("비밀번호가 일치하지 않습니다.");
+            throw new RuntimeException("회원정보가 일치하지 않습니다.");
         }
 
         if (!"ACTIVE".equalsIgnoreCase(user.getStatus())) {
@@ -77,8 +77,7 @@ public class UserService {
                 user.getEmail(),
                 user.getNickname(),
                 user.getRole(),
-                "로그인 성공"
-        );
+                "로그인 성공");
     }
 
     public String checkEmail(String email) {
@@ -95,7 +94,7 @@ public class UserService {
 
     public UserProfileResponseDto getUserProfile(String email) {
         User user = userRepository.findByEmail(email.trim())
-                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 이메일입니다."));
+                .orElseThrow(() -> new IllegalArgumentException("회원정보가 일치하지 않습니다."));
 
         return toUserProfile(user);
     }
@@ -111,7 +110,8 @@ public class UserService {
             return false;
         }
 
-        if (storedPassword.startsWith("$2a$") || storedPassword.startsWith("$2b$") || storedPassword.startsWith("$2y$")) {
+        if (storedPassword.startsWith("$2a$") || storedPassword.startsWith("$2b$")
+                || storedPassword.startsWith("$2y$")) {
             return passwordEncoder.matches(rawPassword, storedPassword);
         }
 
