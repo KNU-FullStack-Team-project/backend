@@ -1,3 +1,6 @@
+-- 시퀀스 생성 (Sequence for PKs)
+CREATE SEQUENCE hibernate_sequence START WITH 1000 INCREMENT BY 1;
+
 CREATE TABLE order_executions (
 	execution_id	NUMBER		NULL,
 	order_id	NUMBER		NOT NULL,

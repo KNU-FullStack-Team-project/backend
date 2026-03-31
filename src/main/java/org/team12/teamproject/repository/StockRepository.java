@@ -12,7 +12,7 @@ public interface StockRepository extends JpaRepository<Stock, Long> {
 
     @Query(value = "SELECT * FROM ( " +
                    "  SELECT a.*, ROWNUM rnum FROM ( " +
-                   "    SELECT * FROM stocks ORDER BY stock_id ASC " +
+                   "    SELECT * FROM stock ORDER BY stock_id ASC " +
                    "  ) a WHERE ROWNUM <= :upper " +
                    ") WHERE rnum > :lower", nativeQuery = true)
     List<Stock> findStocksNative(@Param("lower") int lower, @Param("upper") int upper);

@@ -38,7 +38,7 @@ public class OrderController {
      * 사용자의 주문 내역 조회
      */
     @GetMapping
-    public ResponseEntity<?> getOrders(@RequestParam Long accountId) {
+    public ResponseEntity<?> getOrders(@RequestParam(name = "accountId") Long accountId) {
         try {
             return ResponseEntity.ok(orderService.getOrdersByAccountId(accountId));
         } catch (Exception e) {
@@ -50,7 +50,10 @@ public class OrderController {
      * 주문 취소 처리
      */
     @PostMapping("/{orderId}/cancel")
-    public ResponseEntity<?> cancelOrder(@PathVariable Long orderId, @RequestParam Long accountId) {
+    public ResponseEntity<?> cancelOrder(
+            @PathVariable(name = "orderId") Long orderId, 
+            @RequestParam(name = "accountId") Long accountId
+    ) {
         try {
             orderService.cancelOrder(orderId, accountId);
             return ResponseEntity.ok("Order canceled successfully.");

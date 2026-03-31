@@ -1,11 +1,14 @@
 package org.team12.teamproject.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.*;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.team12.teamproject.dto.PageResponseDto;
@@ -31,6 +34,7 @@ public class StockService {
     private final RestTemplate restTemplate = new RestTemplate();
     private final StockRepository stockRepository;
     private final RedisTemplate<String, String> redisTemplate;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${kis.api.url}")
     private String apiUrl;
@@ -139,9 +143,44 @@ public class StockService {
         long totalElements = stockRepository.count();
         int totalPages = (int) Math.ceil((double) totalElements / size);
 
-        List<StockResponseDto> content = stockList.stream()
-                .map(stock -> getStockDetail(stock.getStockCode()))
-                .toList();
+        List<StockResponseDto> content = new ArrayList<>();
+
+        try {
+            List<String> keys = stockList.stream()
+                    .map(s -> "stock:price:" + s.getStockCode())
+                    .collect(Collectors.toList());
+
+            List<String> cachedValues = redisTemplate.opsForValue().multiGet(keys);
+
+            for (int i = 0; i < stockList.size(); i++) {
+                Stock stock = stockList.get(i);
+                String cachedData = (cachedValues != null && i < cachedValues.size()) ? cachedValues.get(i) : null;
+
+                StockResponseDto.StockResponseDtoBuilder builder = StockResponseDto.builder()
+                        .symbol(stock.getStockCode())
+                        .name(stock.getStockName());
+
+                if (cachedData != null) {
+                    String[] parts = cachedData.split(":");
+                    if (parts.length >= 4) {
+                        content.add(builder
+                                .currentPrice(parts[0])
+                                .changeAmount(parts[1])
+                                .changeRate(parts[2])
+                                .volume(parts[3])
+                                .build());
+                        continue;
+                    }
+                }
+
+                content.add(getStockDetail(stock.getStockCode()));
+            }
+        } catch (Exception e) {
+            log.warn("Redis 벌크 조회 실패, 개별 조회로 대체: {}", e.getMessage());
+            content = stockList.stream()
+                    .map(stock -> getStockDetail(stock.getStockCode()))
+                    .toList();
+        }
 
         return PageResponseDto.<StockResponseDto>builder()
                 .content(content)
@@ -161,20 +200,28 @@ public class StockService {
             String cachedData = redisTemplate.opsForValue().get(cacheKey);
             if (cachedData != null) {
                 String[] parts = cachedData.split(":");
-
-                return StockResponseDto.builder()
-                        .symbol(stockCode)
-                        .name(stockRepository.findByStockCode(stockCode)
-                                .map(Stock::getStockName)
-                                .orElse("이름없음"))
-                        .currentPrice(parts[0])
-                        .changeAmount(parts[1])
-                        .changeRate(parts[2])
-                        .volume(parts[3])
-                        .build();
+                if (parts.length >= 4) {
+                    return StockResponseDto.builder()
+                            .symbol(stockCode)
+                            .name(stockRepository.findByStockCode(stockCode)
+                                    .map(Stock::getStockName)
+                                    .orElse("이름없음"))
+                            .currentPrice(parts[0])
+                            .changeAmount(parts[1])
+                            .changeRate(parts[2])
+                            .volume(parts[3])
+                            .build();
+                } else {
+                    log.warn("Redis 캐시 포맷 불일치: {}", cachedData);
+                    redisTemplate.delete(cacheKey);
+                }
             }
         } catch (Exception e) {
-            log.warn("Redis 캐시 실패: {}", e.getMessage());
+            log.warn("Redis 캐시 파싱 실패 ({}): {}", cacheKey, e.getMessage());
+            try {
+                redisTemplate.delete(cacheKey);
+            } catch (Exception ignore) {
+            }
         }
 
         StockResponseDto dto = fetchPriceFromKisApi(stockCode);
@@ -199,40 +246,72 @@ public class StockService {
     }
 
     /**
-     * 주식 캔들 데이터(일봉) 조회
+     * 주식 캔들 데이터 조회 (기간별 동적 호출 및 캐싱 적용)
+     * period: 1D(5분), 1W(일), 1M(일), 6M(월), 1Y(월)
      */
-    public List<StockCandleDto> getStockHistory(String stockCode) {
+    public List<StockCandleDto> getStockHistory(String symbol, String period) {
+        String cacheKey = "stock:history:" + symbol + ":" + period;
+
+        try {
+            String cachedData = redisTemplate.opsForValue().get(cacheKey);
+            if (cachedData != null) {
+                TypeReference<List<StockCandleDto>> typeRef = new TypeReference<>() {};
+                return objectMapper.readValue(cachedData, typeRef);
+            }
+        } catch (Exception e) {
+            log.warn("Redis 캔들 캐시 확인 실패: {}", e.getMessage());
+        }
+
+        List<StockCandleDto> resultData = new ArrayList<>();
+
         try {
             ensureAccessToken();
 
             LocalDateTime now = LocalDateTime.now();
             String endDate = now.format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-            String startDate = now.minusDays(30).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
 
-            String url = apiUrl + "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
-                    + "?FID_COND_MRKT_DIV_CODE=J"
-                    + "&FID_INPUT_ISCD=" + stockCode
-                    + "&FID_INPUT_DATE_1=" + startDate
-                    + "&FID_INPUT_DATE_2=" + endDate
-                    + "&FID_PERIOD_DIV_CODE=D"
-                    + "&FID_ORG_ADJ_PRC=0";
+            if ("1D".equals(period)) {
+                resultData = fetchIntradayHistory(symbol, "0005");
+            } else {
+                String periodCode = "D";
+                String startDate;
 
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            headers.set("authorization", "Bearer " + cachedAccessToken);
-            headers.set("appkey", appKey);
-            headers.set("appsecret", appSecret);
-            headers.set("tr_id", "FHKST03010100");
+                if ("1W".equals(period)) {
+                    startDate = now.minusDays(7).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                } else if ("1M".equals(period)) {
+                    startDate = now.minusDays(31).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                } else if ("6M".equals(period)) {
+                    periodCode = "M";
+                    startDate = now.minusMonths(6).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                } else if ("1Y".equals(period)) {
+                    periodCode = "M";
+                    startDate = now.minusYears(1).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                } else {
+                    startDate = now.minusDays(30).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                }
 
-            HttpEntity<String> entity = new HttpEntity<>(headers);
-            ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
+                String url = apiUrl + "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
+                        + "?FID_COND_MRKT_DIV_CODE=J"
+                        + "&FID_INPUT_ISCD=" + symbol
+                        + "&FID_INPUT_DATE_1=" + startDate
+                        + "&FID_INPUT_DATE_2=" + endDate
+                        + "&FID_PERIOD_DIV_CODE=" + periodCode
+                        + "&FID_ORG_ADJ_PRC=0";
 
-            if (response.getBody() != null && response.getBody().containsKey("output2")) {
-                List<Map<String, Object>> output2 =
-                        (List<Map<String, Object>>) response.getBody().get("output2");
+                HttpHeaders headers = new HttpHeaders();
+                headers.set("authorization", "Bearer " + cachedAccessToken);
+                headers.set("appkey", appKey);
+                headers.set("appsecret", appSecret);
+                headers.set("tr_id", "FHKST03010100");
 
-                return output2.stream()
-                        .map(data -> StockCandleDto.builder()
+                HttpEntity<String> entity = new HttpEntity<>(headers);
+                ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
+
+                Map<String, Object> body = response.getBody();
+                if (body != null && body.containsKey("output2")) {
+                    List<Map<String, Object>> output2 = (List<Map<String, Object>>) body.get("output2");
+                    if (output2 != null) {
+                        resultData = output2.stream().map(data -> StockCandleDto.builder()
                                 .date((String) data.get("stck_bsop_date"))
                                 .open((String) data.get("stck_oprc"))
                                 .high((String) data.get("stck_hgpr"))
@@ -240,17 +319,108 @@ public class StockService {
                                 .close((String) data.get("stck_clpr"))
                                 .volume((String) data.get("acml_vol"))
                                 .build())
-                        .collect(Collectors.toList());
+                                .collect(Collectors.toList());
+                    }
+                }
             }
-        } catch (org.springframework.web.client.HttpClientErrorException.Unauthorized e) {
-            log.warn("KIS 토큰 만료 또는 무효(401). 캔들 데이터 조회 재시도합니다.");
-            clearTokenCache();
-            return getStockHistory(stockCode);
         } catch (Exception e) {
-            log.error("캔들 데이터 조회 에러: {}", e.getMessage());
+            log.error("캔들 데이터 API 호출 에러 ({}): {}", period, e.getMessage());
+        }
+
+        if (!resultData.isEmpty()) {
+            try {
+                String jsonData = objectMapper.writeValueAsString(resultData);
+                Duration ttl = "1D".equals(period) ? Duration.ofMinutes(1) : Duration.ofMinutes(10);
+                redisTemplate.opsForValue().set(cacheKey, jsonData, ttl);
+            } catch (Exception e) {
+                log.warn("Redis 캔들 캐시 저장 실패: {}", e.getMessage());
+            }
+        }
+
+        return resultData;
+    }
+
+    private List<StockCandleDto> fetchIntradayHistory(String symbol, String intervalCode) {
+        try {
+            ensureAccessToken();
+
+            String url = apiUrl + "/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
+                    + "?FID_COND_MRKT_DIV_CODE=J"
+                    + "&FID_INPUT_ISCD=" + symbol
+                    + "&FID_PW_DATA_IN_YN=N"
+                    + "&FID_INPUT_HOUR_1=";
+
+            log.info("KIS 분봉 API 요청 URL: {}", url);
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("authorization", "Bearer " + cachedAccessToken);
+            headers.set("appkey", appKey);
+            headers.set("appsecret", appSecret);
+            headers.set("tr_id", "FHKST03010200");
+
+            HttpEntity<String> entity = new HttpEntity<>(headers);
+            ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
+
+            Map<String, Object> body = response.getBody();
+            String bodyStr = objectMapper.writeValueAsString(body);
+            log.info("KIS 분봉 API 전체 응답: {}", bodyStr);
+
+            if (body != null && body.containsKey("output2")) {
+                List<Map<String, Object>> output2 = (List<Map<String, Object>>) body.get("output2");
+                if (output2 != null) {
+                    return output2.stream().map(data -> StockCandleDto.builder()
+                            .date((String) data.get("stck_bsop_date"))
+                            .open((String) data.get("stck_oprc"))
+                            .high((String) data.get("stck_hgpr"))
+                            .low((String) data.get("stck_lwpr"))
+                            .close((String) data.get("stck_prpr"))
+                            .volume((String) data.get("cntg_vol"))
+                            .build())
+                            .collect(Collectors.toList());
+                }
+            }
+        } catch (Exception e) {
+            log.error("분봉 데이터 조회 에러: {}", e.getMessage());
         }
 
         return new ArrayList<>();
+    }
+
+    // 하위 호환용
+    public List<StockCandleDto> getStockHistory(String symbol) {
+        return getStockHistory(symbol, "1M");
+    }
+
+    /**
+     * 1분마다 전 종목 시세를 Redis에 동기화
+     */
+    @Scheduled(fixedRate = 60000)
+    public void updateAllStockPricesToRedis() {
+        log.info(">>> [Scheduled] 전 종목 시세 Redis 동기화 시작...");
+        List<Stock> allStocks = stockRepository.findAll();
+
+        for (Stock stock : allStocks) {
+            try {
+                String symbol = stock.getStockCode();
+                StockResponseDto latest = fetchPriceFromKisApi(symbol);
+
+                if (latest != null) {
+                    String cacheKey = "stock:price:" + symbol;
+                    String value = latest.getCurrentPrice() + ":"
+                            + latest.getChangeAmount() + ":"
+                            + latest.getChangeRate() + ":"
+                            + latest.getVolume();
+
+                    redisTemplate.opsForValue().set(cacheKey, value, Duration.ofMinutes(10));
+                }
+
+                Thread.sleep(100);
+            } catch (Exception e) {
+                log.warn("주식({}) 시세 동기화 중 오류: {}", stock.getStockCode(), e.getMessage());
+            }
+        }
+
+        log.info(">>> [Scheduled] 전 종목 시세 Redis 동기화 완료 (총 {}건)", allStocks.size());
     }
 
     private void ensureAccessToken() {
@@ -278,9 +448,8 @@ public class StockService {
         try {
             ensureAccessToken();
 
-            String url = apiUrl
-                    + "/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD="
-                    + stockCode;
+            String url = apiUrl + "/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=" + stockCode;
+            log.info("KIS API 요청 URL: {}", url);
 
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
@@ -290,13 +459,11 @@ public class StockService {
             headers.set("tr_id", "FHKST01010100");
 
             HttpEntity<String> entity = new HttpEntity<>(headers);
-
-            ResponseEntity<Map> response =
-                    restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
+            ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
+            log.info("KIS API 응답: {}", response.getBody());
 
             if (response.getBody() != null && response.getBody().containsKey("output")) {
-                Map<String, Object> output =
-                        (Map<String, Object>) response.getBody().get("output");
+                Map<String, Object> output = (Map<String, Object>) response.getBody().get("output");
 
                 String stockName = stockRepository.findByStockCode(stockCode)
                         .map(Stock::getStockName)
@@ -310,6 +477,8 @@ public class StockService {
                         .changeRate((String) output.get("prdy_ctrt"))
                         .volume((String) output.get("acml_vol"))
                         .build();
+            } else {
+                log.warn("KIS API 응답에 output 데이터가 없습니다: {}", response.getBody());
             }
 
             return null;
@@ -319,9 +488,18 @@ public class StockService {
             clearTokenCache();
             return fetchPriceFromKisApi(stockCode);
         } catch (Exception e) {
-            log.error("API 호출 에러: {}", e.getMessage());
+            log.error("API 호출 에러: {}, 상세: {}", e.getMessage(), e.toString());
             return null;
         }
+    }
+
+    /**
+     * KIS 토큰 강제 갱신
+     */
+    public void refreshToken() {
+        log.info("사용자 요청에 의한 KIS 토큰 강제 갱신 시작...");
+        clearTokenCache();
+        issueAccessToken();
     }
 
     private void clearTokenCache() {
@@ -339,19 +517,22 @@ public class StockService {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
 
-        Map<String, String> body = new HashMap<>();
-        body.put("grant_type", "client_credentials");
-        body.put("appkey", appKey);
-        body.put("appsecret", appSecret);
+        Map<String, String> bodyMap = new HashMap<>();
+        bodyMap.put("grant_type", "client_credentials");
+        bodyMap.put("appkey", appKey);
+        bodyMap.put("appsecret", appSecret);
 
-        HttpEntity<Map<String, String>> request =
-                new HttpEntity<>(body, headers);
+        HttpEntity<Map<String, String>> request = new HttpEntity<>(bodyMap, headers);
+        ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
+                tokenUrl,
+                HttpMethod.POST,
+                request,
+                new org.springframework.core.ParameterizedTypeReference<Map<String, Object>>() {}
+        );
 
-        ResponseEntity<Map> response =
-                restTemplate.postForEntity(tokenUrl, request, Map.class);
-
-        if (response.getBody() != null) {
-            String token = (String) response.getBody().get("access_token");
+        Map<String, Object> resBody = response.getBody();
+        if (resBody != null) {
+            String token = (String) resBody.get("access_token");
             this.cachedAccessToken = token;
 
             String redisKey = "kis:access_token:" + appKey;
