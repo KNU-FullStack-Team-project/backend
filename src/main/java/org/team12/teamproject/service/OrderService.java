@@ -210,4 +210,57 @@ public class OrderService {
         
         orderRepository.save(order);
     }
+
+    /**
+     * 사용자의 주문 내역 조회
+     */
+    @Transactional(readOnly = true)
+    public java.util.List<Order> getOrdersByAccountId(Long accountId) {
+        return orderRepository.findByAccountIdOrderByOrderedAtDesc(accountId);
+    }
+
+    /**
+     * 주문 취소 로직
+     */
+    @Transactional
+    public void cancelOrder(Long orderId, Long accountId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new IllegalArgumentException("주문을 찾을 수 없습니다."));
+
+        // 1. 소유권 확인
+        if (!order.getAccount().getId().equals(accountId)) {
+            throw new IllegalArgumentException("본인의 주문만 취소할 수 있습니다.");
+        }
+
+        // 2. 취소 가능한 상태인지 확인 (PENDING, QUEUED)
+        String status = order.getOrderStatus();
+        if (!"PENDING".equals(status) && !"QUEUED".equals(status)) {
+            throw new IllegalStateException("이미 체결되었거나 취소된 주문은 취소할 수 없습니다. (현재 상태: " + status + ")");
+        }
+
+        // 3. Redis에서 주문 제거
+        if ("QUEUED".equals(status)) {
+            // MARKET 주문 (List)
+            String redisValue = order.getOrderSide() + ":" + order.getId();
+            // "MARKET_BUY:123" 형식인지 확인 필요. placeMarketBuyOrder에서는 "MARKET_BUY:" + order.getId()로 넣음.
+            String fullRedisValue = "MARKET_" + order.getOrderSide() + ":" + order.getId();
+            redisTemplate.opsForList().remove(ORDER_QUEUE_KEY, 1, fullRedisValue);
+        } else if ("PENDING".equals(status)) {
+            // LIMIT 주문 (ZSet)
+            String redisKey = "orders:pending:" + order.getOrderSide().toLowerCase() + ":" + order.getStock().getStockCode();
+            redisTemplate.opsForZSet().remove(redisKey, order.getId().toString());
+        }
+
+        // 4. DB 상태 업데이트 및 취소 시간 기록
+        order.cancel();
+        
+        // 5. 매수 주문인 경우 차감된 금액 환불
+        if ("BUY".equals(order.getOrderSide())) {
+            BigDecimal refundAmount = order.getPrice().multiply(BigDecimal.valueOf(order.getQuantity()));
+            order.getAccount().addBalance(refundAmount);
+        }
+        
+        orderRepository.save(order);
+        log.info("주문 취소 완료: OrderID={}, AccountID={}", orderId, accountId);
+    }
 }

@@ -33,4 +33,29 @@ public class OrderController {
             return ResponseEntity.badRequest().body("Order failed: " + e.getMessage());
         }
     }
+
+    /**
+     * 사용자의 주문 내역 조회
+     */
+    @GetMapping
+    public ResponseEntity<?> getOrders(@RequestParam Long accountId) {
+        try {
+            return ResponseEntity.ok(orderService.getOrdersByAccountId(accountId));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("Failed to fetch orders: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 주문 취소 처리
+     */
+    @PostMapping("/{orderId}/cancel")
+    public ResponseEntity<?> cancelOrder(@PathVariable Long orderId, @RequestParam Long accountId) {
+        try {
+            orderService.cancelOrder(orderId, accountId);
+            return ResponseEntity.ok("Order canceled successfully.");
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("Cancel failed: " + e.getMessage());
+        }
+    }
 }
