@@ -13,7 +13,6 @@ public class AccountController {
 
     private final AccountService accountService;
 
-    // 로그인 기능이 없으므로 임시로 fallbackAccountId (아마도 1)을 사용해 대시보드를 내려받도록 합니다.
     @GetMapping("/my/dashboard")
     public ResponseEntity<AccountDashboardDto> getMyDashboard() {
         Long accountId = accountService.getFallbackAccountId();

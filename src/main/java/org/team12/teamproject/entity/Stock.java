@@ -9,7 +9,7 @@ import java.util.Objects;
 
 
 @Entity
-@Table(name = "stocks")
+@Table(name = "stock")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Stock implements Serializable {
