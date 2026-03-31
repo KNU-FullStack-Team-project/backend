@@ -16,9 +16,10 @@ public class EmailController {
     @PostMapping("/send")
     public String sendEmail(@RequestBody EmailRequestDto dto) {
         try {
+            String cleanEmail = dto.getEmail().trim().toUpperCase();
             String code = emailService.createCode();
-            emailService.sendEmail(dto.getEmail(), code);
-            emailService.saveCode(dto.getEmail(), code);
+            emailService.sendEmail(cleanEmail, code);
+            emailService.saveCode(cleanEmail, code);
             return "인증코드 발송 완료";
         } catch (Exception e) {
             e.printStackTrace();
@@ -28,7 +29,8 @@ public class EmailController {
 
     @PostMapping("/verify")
     public String verifyEmail(@RequestBody EmailRequestDto dto) {
-        boolean result = emailService.verifyCode(dto.getEmail(), dto.getCode());
+        String cleanEmail = dto.getEmail().trim().toUpperCase();
+        boolean result = emailService.verifyCode(cleanEmail, dto.getCode());
 
         if (result) {
             return "인증 성공";

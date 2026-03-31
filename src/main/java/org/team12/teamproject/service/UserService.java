@@ -80,7 +80,7 @@ public class UserService {
 
     public LoginResponseDto login(LoginRequestDto dto) {
 
-        User user = userRepository.findByEmail(dto.getEmail().trim().toLowerCase())
+        User user = userRepository.findByEmail(dto.getEmail().trim().toUpperCase())
                 .orElseThrow(() -> new RuntimeException("회원정보가 일치하지 않습니다."));
 
         if (!matchesPassword(dto.getPassword(), user.getPasswordHash())) {
@@ -113,8 +113,8 @@ public class UserService {
     }
 
     public UserProfileResponseDto getUserProfile(String email) {
-        User user = userRepository.findByEmail(email.trim())
-                .orElseThrow(() -> new IllegalArgumentException("회원정보가 일치하지 않습니다."));
+        User user = userRepository.findByEmail(email.trim().toUpperCase())
+                .orElseThrow(() -> new RuntimeException("회원정보가 일치하지 않습니다."));
 
         return toUserProfile(user);
     }
