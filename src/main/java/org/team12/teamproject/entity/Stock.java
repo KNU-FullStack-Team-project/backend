@@ -7,7 +7,6 @@ import java.io.Serializable;
 import java.time.LocalDateTime;
 import java.util.Objects;
 
-
 @Entity
 @Table(name = "stock")
 @Getter
@@ -18,6 +17,8 @@ public class Stock implements Serializable {
     @GeneratedValue(strategy = GenerationType.SEQUENCE)
     @Column(name = "stock_id")
     private Long id;
+
+    // ❌ symbol 삭제
 
     @Column(name = "stock_code", length = 20, nullable = false)
     private String stockCode;

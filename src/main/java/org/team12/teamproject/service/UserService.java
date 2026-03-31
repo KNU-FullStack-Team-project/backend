@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.team12.teamproject.dto.LoginRequestDto;
+import org.team12.teamproject.dto.LoginResponseDto;
 import org.team12.teamproject.dto.SignupRequestDto;
 import org.team12.teamproject.dto.UserProfileResponseDto;
 import org.team12.teamproject.entity.Account;
@@ -55,7 +56,7 @@ public class UserService {
                 .build();
 
         userRepository.save(user);
-        
+
         // 회원가입 시 기본 계좌 생성 (1,000만원 시작)
         createDefaultAccount(user);
 
@@ -77,7 +78,7 @@ public class UserService {
         accountRepository.save(account);
     }
 
-    public String login(LoginRequestDto dto) {
+    public LoginResponseDto login(LoginRequestDto dto) {
 
         User user = userRepository.findByEmail(dto.getEmail().trim().toUpperCase())
                 .orElse(null);
@@ -87,10 +88,19 @@ public class UserService {
         }
 
         if (!matchesPassword(dto.getPassword(), user.getPasswordHash())) {
-            return "비밀번호가 일치하지 않습니다.";
+            throw new RuntimeException("비밀번호가 일치하지 않습니다.");
         }
 
-        return "로그인 성공";
+        if (!"ACTIVE".equalsIgnoreCase(user.getStatus())) {
+            throw new RuntimeException("비활성화된 계정입니다.");
+        }
+
+        return new LoginResponseDto(
+                user.getId(),
+                user.getEmail(),
+                user.getNickname(),
+                user.getRole(),
+                "로그인 성공");
     }
 
     public String checkEmail(String email) {
@@ -107,7 +117,8 @@ public class UserService {
     }
 
     public UserProfileResponseDto getUserProfile(String email) {
-        if (email == null) throw new IllegalArgumentException("이메일은 필수입니다.");
+        if (email == null)
+            throw new IllegalArgumentException("이메일은 필수입니다.");
         String cleanEmail = email.trim().toUpperCase();
         User user = userRepository.findByEmail(cleanEmail)
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 이메일입니다."));
@@ -126,25 +137,24 @@ public class UserService {
             return false;
         }
 
-        if (storedPassword.startsWith("$2a$") || storedPassword.startsWith("$2b$") || storedPassword.startsWith("$2y$")) {
+        if (storedPassword.startsWith("$2a$") || storedPassword.startsWith("$2b$")
+                || storedPassword.startsWith("$2y$")) {
             return passwordEncoder.matches(rawPassword, storedPassword);
         }
 
         // TODO: 배포 전 이 평문 비밀번호 fallback 로직은 반드시 제거할 것.
-        // 기존 사용자 중 비밀번호가 BCrypt 해시가 아닌 평문으로 저장된 경우만
-        // 임시로 로그인 호환을 위해 허용하는 예외 처리다.
         return storedPassword.equals(rawPassword);
     }
 
     private UserProfileResponseDto toUserProfile(User user) {
         List<Account> accounts = accountRepository.findByUserId(user.getId());
-        
+
         // 계좌가 없는 기존 유저 등을 위한 자동 생성 로직
         if (accounts.isEmpty()) {
             createDefaultAccount(user);
             accounts = accountRepository.findByUserId(user.getId());
         }
-        
+
         Long accountId = accounts.get(0).getId();
 
         return UserProfileResponseDto.builder()
