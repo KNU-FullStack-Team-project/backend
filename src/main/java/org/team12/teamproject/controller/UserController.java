@@ -33,7 +33,6 @@ public class UserController {
         String email = request.get("email");
         return userService.checkEmail(email);
     }
-}
 
     @GetMapping("/profile")
     public ResponseEntity<UserProfileResponseDto> getProfile(@RequestParam String email) {
