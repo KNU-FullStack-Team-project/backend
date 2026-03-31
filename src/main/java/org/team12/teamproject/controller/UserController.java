@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.team12.teamproject.dto.LoginRequestDto;
+import org.team12.teamproject.dto.LoginResponseDto;
 import org.team12.teamproject.dto.SignupRequestDto;
 import org.team12.teamproject.dto.UserProfileResponseDto;
 import org.team12.teamproject.service.UserService;
@@ -24,8 +25,8 @@ public class UserController {
     }
 
     @PostMapping("/login")
-    public String login(@RequestBody LoginRequestDto dto) {
-        return userService.login(dto);
+    public ResponseEntity<LoginResponseDto> login(@RequestBody LoginRequestDto dto) {
+        return ResponseEntity.ok(userService.login(dto));
     }
 
     @PostMapping("/check-email")

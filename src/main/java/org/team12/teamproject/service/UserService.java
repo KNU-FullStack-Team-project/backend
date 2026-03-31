@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.team12.teamproject.dto.LoginRequestDto;
+import org.team12.teamproject.dto.LoginResponseDto;
 import org.team12.teamproject.dto.SignupRequestDto;
 import org.team12.teamproject.dto.UserProfileResponseDto;
 import org.team12.teamproject.entity.Account;
@@ -58,20 +59,26 @@ public class UserService {
         return "회원가입 완료";
     }
 
-    public String login(LoginRequestDto dto) {
+    public LoginResponseDto login(LoginRequestDto dto) {
 
-        User user = userRepository.findByEmail(dto.getEmail().trim())
-                .orElse(null);
-
-        if (user == null) {
-            return "존재하지 않는 이메일입니다.";
-        }
+        User user = userRepository.findByEmail(dto.getEmail().trim().toLowerCase())
+                .orElseThrow(() -> new RuntimeException("존재하지 않는 이메일입니다."));
 
         if (!matchesPassword(dto.getPassword(), user.getPasswordHash())) {
-            return "비밀번호가 일치하지 않습니다.";
+            throw new RuntimeException("비밀번호가 일치하지 않습니다.");
         }
 
-        return "로그인 성공";
+        if (!"ACTIVE".equalsIgnoreCase(user.getStatus())) {
+            throw new RuntimeException("비활성화된 계정입니다.");
+        }
+
+        return new LoginResponseDto(
+                user.getId(),
+                user.getEmail(),
+                user.getNickname(),
+                user.getRole(),
+                "로그인 성공"
+        );
     }
 
     public String checkEmail(String email) {
@@ -109,8 +116,6 @@ public class UserService {
         }
 
         // TODO: 배포 전 이 평문 비밀번호 fallback 로직은 반드시 제거할 것.
-        // 기존 사용자 중 비밀번호가 BCrypt 해시가 아닌 평문으로 저장된 경우만
-        // 임시로 로그인 호환을 위해 허용하는 예외 처리다.
         return storedPassword.equals(rawPassword);
     }
 
