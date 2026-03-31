@@ -281,8 +281,9 @@ public class StockService {
             String url = apiUrl + "/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
                     + "?FID_COND_MRKT_DIV_CODE=J"
                     + "&FID_INPUT_ISCD=" + symbol
-                    + "&FID_PW_DATA_IN_YN=N"
-                    + "&FID_INPUT_HOUR_1=";
+                    + "&FID_ETC_CLS_CODE=" 
+                    + "&FID_INPUT_HOUR_1="
+                    + "&FID_PW_DATA_INCU_YN=N";
 
             log.info("KIS 분봉 API 요청 URL: {}", url);
 
@@ -296,20 +297,27 @@ public class StockService {
             ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
             
             Map<String, Object> body = response.getBody();
-            String bodyStr = objectMapper.writeValueAsString(body);
-            log.info("KIS 분봉 API 전체 응답: {}", bodyStr);
+            if (body != null) {
+                log.info("KIS 분봉 API 상세 응답 (symbol: {}): rt_cd={}, msg_cd={}, msg1={}", 
+                        symbol, body.get("rt_cd"), body.get("msg_cd"), body.get("msg1"));
+                // 전체 바디를 알고 싶으면 아래 주석 해제 (로그가 너무 길어질 수 있음)
+                // log.info("전체 응답 바디: {}", objectMapper.writeValueAsString(body)); 
+            } else {
+                log.warn("KIS 분봉 API 응답 빈 본문 (symbol: {})", symbol);
+            }
 
             if (body != null && body.containsKey("output2")) {
                 List<Map<String, Object>> output2 = (List<Map<String, Object>>) body.get("output2");
                 if (output2 != null) {
+                    log.info("수신된 분봉 데이터 개수: {} (symbol: {})", output2.size(), symbol);
                     return output2.stream().map(data -> StockCandleDto.builder()
-                            .date((String) data.get("stck_bsop_date"))
-                            .time((String) data.get("stck_cntg_hour"))
-                            .open((String) data.get("stck_oprc"))
-                            .high((String) data.get("stck_hgpr"))
-                            .low((String) data.get("stck_lwpr"))
-                            .close((String) data.get("stck_prpr")) 
-                            .volume((String) data.get("cntg_vol")) 
+                            .date(String.valueOf(data.get("stck_bsop_date")))
+                            .time(String.valueOf(data.get("stck_cntg_hour")))
+                            .open(String.valueOf(data.get("stck_oprc")))
+                            .high(String.valueOf(data.get("stck_hgpr")))
+                            .low(String.valueOf(data.get("stck_lwpr")))
+                            .close(String.valueOf(data.get("stck_prpr"))) 
+                            .volume(String.valueOf(data.get("cntg_vol"))) 
                             .build())
                             .collect(Collectors.toList());
                 }

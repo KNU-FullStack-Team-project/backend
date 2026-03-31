@@ -9,13 +9,14 @@ import org.team12.teamproject.service.AccountService;
 @RestController
 @RequestMapping("/api/accounts")
 @RequiredArgsConstructor
+@CrossOrigin(origins = "http://localhost:5173")
 public class AccountController {
 
     private final AccountService accountService;
 
     @GetMapping("/my/dashboard")
-    public ResponseEntity<AccountDashboardDto> getMyDashboard() {
-        Long accountId = accountService.getFallbackAccountId();
+    public ResponseEntity<AccountDashboardDto> getMyDashboard(@RequestParam String email) {
+        Long accountId = accountService.getAccountIdByEmail(email);
         AccountDashboardDto dto = accountService.getDashboard(accountId);
         return ResponseEntity.ok(dto);
     }

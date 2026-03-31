@@ -8,6 +8,9 @@ import org.team12.teamproject.entity.Holding;
 import org.team12.teamproject.repository.AccountRepository;
 import org.team12.teamproject.repository.HoldingRepository;
 
+import org.team12.teamproject.repository.UserRepository;
+import org.team12.teamproject.entity.User;
+import java.time.LocalDateTime;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.text.NumberFormat;
@@ -23,12 +26,29 @@ public class AccountService {
     private final HoldingRepository holdingRepository;
     private final StockService stockService;
 
-    // TODO: 프론트 연동 중 에러 방지용 임시 기본 유저 생성 로직 (1번 유저, 1번 계좌 리턴 혹은 생성)
-    public Long getFallbackAccountId() {
-        return accountRepository.findById(1L).map(Account::getId).orElseGet(() -> {
-            // DB 초기화 후 등 계좌가 아예 없을 때
-            return 1L; // 실제 개발 시에는 테스트용 계좌 생성 로직 필요 
-        });
+    private final UserRepository userRepository;
+
+    public Long getAccountIdByEmail(String email) {
+        if (email == null) throw new IllegalArgumentException("Email is required");
+        String cleanEmail = email.trim().toUpperCase();
+        User user = userRepository.findByEmail(cleanEmail)
+                .orElseThrow(() -> new IllegalArgumentException("User not found: " + cleanEmail));
+        
+        List<Account> accounts = accountRepository.findByUserId(user.getId());
+        if (accounts.isEmpty()) {
+            // 이 시점까지 계좌가 없으면 생성 (안전장치)
+            Account account = Account.builder()
+                    .user(user)
+                    .accountType("MAIN")
+                    .accountName(user.getNickname() + "의 기본 계좌")
+                    .cashBalance(new BigDecimal("5000000"))
+                    .isActive(true)
+                    .createdAt(LocalDateTime.now())
+                    .updatedAt(LocalDateTime.now())
+                    .build();
+            return accountRepository.save(account).getId();
+        }
+        return accounts.get(0).getId();
     }
 
     public AccountDashboardDto getDashboard(Long accountId) {
@@ -82,8 +102,10 @@ public class AccountService {
         }
 
         return AccountDashboardDto.builder()
+                .accountId(accountId)
                 .totalAsset(currencyFormat.format(totalAsset))
                 .cashBalance(currencyFormat.format(cashBalance))
+                .rawCashBalance(cashBalance)
                 .totalProfitAmount((totalProfit.compareTo(BigDecimal.ZERO) >= 0 ? "+" : "") + currencyFormat.format(totalProfit))
                 .totalReturnRate((returnRate.compareTo(BigDecimal.ZERO) >= 0 ? "+" : "") + String.format("%.2f", returnRate) + "%")
                 .holdings(holdingDtos)

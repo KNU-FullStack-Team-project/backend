@@ -10,6 +10,7 @@ import org.team12.teamproject.service.OrderService;
 @RestController
 @RequestMapping("/api/orders")
 @RequiredArgsConstructor
+@CrossOrigin(origins = "http://localhost:5173")
 public class OrderController {
 
     private final OrderService orderService;
@@ -22,7 +23,8 @@ public class OrderController {
                 if ("MARKET".equalsIgnoreCase(req.getOrderType())) {
                     order = orderService.placeMarketBuyOrder(req.getAccountId(), req.getStockCode(), req.getQuantity());
                 } else {
-                    order = orderService.placeLimitBuyOrder(req.getAccountId(), req.getStockCode(), req.getQuantity(), req.getPrice());
+                    order = orderService.placeLimitBuyOrder(req.getAccountId(), req.getStockCode(), req.getQuantity(),
+                            req.getPrice());
                 }
             } else {
                 // SELL인 경우 (현재 MARKET SELL만 구현됨)
@@ -51,9 +53,8 @@ public class OrderController {
      */
     @PostMapping("/{orderId}/cancel")
     public ResponseEntity<?> cancelOrder(
-            @PathVariable(name = "orderId") Long orderId, 
-            @RequestParam(name = "accountId") Long accountId
-    ) {
+            @PathVariable(name = "orderId") Long orderId,
+            @RequestParam(name = "accountId") Long accountId) {
         try {
             orderService.cancelOrder(orderId, accountId);
             return ResponseEntity.ok("Order canceled successfully.");

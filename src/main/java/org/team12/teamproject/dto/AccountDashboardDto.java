@@ -11,8 +11,10 @@ import java.util.List;
 @Setter
 @Builder
 public class AccountDashboardDto {
+    private Long accountId;
     private String totalAsset;
     private String cashBalance;
+    private BigDecimal rawCashBalance;
     private String totalProfitAmount;
     private String totalReturnRate;
 

@@ -11,6 +11,7 @@ import org.team12.teamproject.entity.User;
 import org.team12.teamproject.repository.AccountRepository;
 import org.team12.teamproject.repository.UserRepository;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -24,12 +25,13 @@ public class UserService {
     private final PasswordEncoder passwordEncoder;
 
     public String signup(SignupRequestDto dto) {
+        String email = dto.getEmail().trim().toUpperCase();
 
-        if (!emailService.isVerified(dto.getEmail())) {
+        if (!emailService.isVerified(email)) {
             return "이메일 인증을 먼저 완료해주세요.";
         }
 
-        if (userRepository.countByEmail(dto.getEmail()) > 0) {
+        if (userRepository.countByEmail(email) > 0) {
             return "이미 사용 중인 이메일입니다.";
         }
 
@@ -40,7 +42,7 @@ public class UserService {
         String encodedPassword = passwordEncoder.encode(dto.getPassword());
 
         User user = User.builder()
-                .email(dto.getEmail())
+                .email(email)
                 .passwordHash(encodedPassword)
                 .nickname(dto.getNickname())
                 .profileImageUrl(null)
@@ -53,14 +55,31 @@ public class UserService {
                 .build();
 
         userRepository.save(user);
+        
+        // 회원가입 시 기본 계좌 생성 (1,000만원 시작)
+        createDefaultAccount(user);
+
         emailService.clearVerification(dto.getEmail());
 
         return "회원가입 완료";
     }
 
+    private void createDefaultAccount(User user) {
+        Account account = Account.builder()
+                .user(user)
+                .accountType("MAIN")
+                .accountName(user.getNickname() + "의 기본 계좌")
+                .cashBalance(new BigDecimal("5000000")) // 500만원
+                .isActive(true)
+                .createdAt(LocalDateTime.now())
+                .updatedAt(LocalDateTime.now())
+                .build();
+        accountRepository.save(account);
+    }
+
     public String login(LoginRequestDto dto) {
 
-        User user = userRepository.findByEmail(dto.getEmail().trim())
+        User user = userRepository.findByEmail(dto.getEmail().trim().toUpperCase())
                 .orElse(null);
 
         if (user == null) {
@@ -79,7 +98,8 @@ public class UserService {
             return "이메일을 입력해주세요.";
         }
 
-        if (userRepository.countByEmail(email.trim()) > 0) {
+        String cleanEmail = email.trim().toUpperCase();
+        if (userRepository.countByEmail(cleanEmail) > 0) {
             return "이미 사용 중인 이메일입니다.";
         }
 
@@ -87,7 +107,9 @@ public class UserService {
     }
 
     public UserProfileResponseDto getUserProfile(String email) {
-        User user = userRepository.findByEmail(email.trim())
+        if (email == null) throw new IllegalArgumentException("이메일은 필수입니다.");
+        String cleanEmail = email.trim().toUpperCase();
+        User user = userRepository.findByEmail(cleanEmail)
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 이메일입니다."));
 
         return toUserProfile(user);
@@ -116,7 +138,14 @@ public class UserService {
 
     private UserProfileResponseDto toUserProfile(User user) {
         List<Account> accounts = accountRepository.findByUserId(user.getId());
-        Long accountId = accounts.isEmpty() ? null : accounts.get(0).getId();
+        
+        // 계좌가 없는 기존 유저 등을 위한 자동 생성 로직
+        if (accounts.isEmpty()) {
+            createDefaultAccount(user);
+            accounts = accountRepository.findByUserId(user.getId());
+        }
+        
+        Long accountId = accounts.get(0).getId();
 
         return UserProfileResponseDto.builder()
                 .id(user.getId())
