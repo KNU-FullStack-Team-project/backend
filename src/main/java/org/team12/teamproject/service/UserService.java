@@ -3,6 +3,7 @@ package org.team12.teamproject.service;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.team12.teamproject.dto.ChangePasswordRequestDto;
 import org.team12.teamproject.dto.LoginRequestDto;
 import org.team12.teamproject.dto.LoginResponseDto;
 import org.team12.teamproject.dto.SignupRequestDto;
@@ -79,7 +80,6 @@ public class UserService {
     }
 
     public LoginResponseDto login(LoginRequestDto dto) {
-
         User user = userRepository.findByEmail(dto.getEmail().trim().toUpperCase())
                 .orElseThrow(() -> new RuntimeException("회원정보가 일치하지 않습니다."));
 
@@ -119,6 +119,42 @@ public class UserService {
         return toUserProfile(user);
     }
 
+    public String changePassword(ChangePasswordRequestDto dto) {
+        String email = dto.getEmail() != null ? dto.getEmail().trim().toUpperCase() : "";
+        String currentPassword = dto.getCurrentPassword();
+        String newPassword = dto.getNewPassword();
+
+        if (email.isEmpty()) {
+            throw new RuntimeException("회원 정보를 찾을 수 없습니다.");
+        }
+
+        if (currentPassword == null || currentPassword.isBlank()
+                || newPassword == null || newPassword.isBlank()) {
+            throw new RuntimeException("비밀번호를 모두 입력해 주세요.");
+        }
+
+        if (!isValidPassword(newPassword)) {
+            throw new RuntimeException("새 비밀번호는 8자 이상, 영문/숫자/특수문자를 포함해야 합니다.");
+        }
+
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("회원정보가 일치하지 않습니다."));
+
+        if (!matchesPassword(currentPassword, user.getPasswordHash())) {
+            throw new RuntimeException("현재 비밀번호가 일치하지 않습니다.");
+        }
+
+        if (matchesPassword(newPassword, user.getPasswordHash())) {
+            throw new RuntimeException("새 비밀번호는 기존 비밀번호와 다른 값으로 설정해 주세요.");
+        }
+
+        user.setPasswordHash(passwordEncoder.encode(newPassword));
+        user.setUpdatedAt(LocalDateTime.now());
+        userRepository.save(user);
+
+        return "비밀번호가 변경되었습니다.";
+    }
+
     public List<UserProfileResponseDto> getUserList() {
         return userRepository.findAll().stream()
                 .map(this::toUserProfile)
@@ -130,13 +166,19 @@ public class UserService {
             return false;
         }
 
-        if (storedPassword.startsWith("$2a$") || storedPassword.startsWith("$2b$")
-                || storedPassword.startsWith("$2y$")) {
-            return passwordEncoder.matches(rawPassword, storedPassword);
+        return passwordEncoder.matches(rawPassword, storedPassword);
+    }
+
+    private boolean isValidPassword(String value) {
+        if (value == null || value.length() < 8) {
+            return false;
         }
 
-        // TODO: 배포 전 이 평문 비밀번호 fallback 로직은 반드시 제거할 것.
-        return storedPassword.equals(rawPassword);
+        boolean hasLetter = value.chars().anyMatch(Character::isLetter);
+        boolean hasDigit = value.chars().anyMatch(Character::isDigit);
+        boolean hasSpecial = value.chars().anyMatch(ch -> !Character.isLetterOrDigit(ch));
+
+        return hasLetter && hasDigit && hasSpecial;
     }
 
     private UserProfileResponseDto toUserProfile(User user) {

@@ -3,6 +3,7 @@ package org.team12.teamproject.controller;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.team12.teamproject.dto.ChangePasswordRequestDto;
 import org.team12.teamproject.dto.LoginRequestDto;
 import org.team12.teamproject.dto.LoginResponseDto;
 import org.team12.teamproject.dto.SignupRequestDto;
@@ -38,5 +39,10 @@ public class UserController {
     @GetMapping("/profile")
     public ResponseEntity<UserProfileResponseDto> getProfile(@RequestParam String email) {
         return ResponseEntity.ok(userService.getUserProfile(email));
+    }
+
+    @PostMapping("/change-password")
+    public ResponseEntity<String> changePassword(@RequestBody ChangePasswordRequestDto dto) {
+        return ResponseEntity.ok(userService.changePassword(dto));
     }
 }
