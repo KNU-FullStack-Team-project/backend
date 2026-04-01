@@ -30,7 +30,7 @@ public class AccountService {
 
     public Long getAccountIdByEmail(String email) {
         if (email == null) throw new IllegalArgumentException("Email is required");
-        String cleanEmail = email.trim().toUpperCase();
+        String cleanEmail = email.trim();
         User user = userRepository.findByEmail(cleanEmail)
                 .orElseThrow(() -> new IllegalArgumentException("User not found: " + cleanEmail));
         

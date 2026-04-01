@@ -16,7 +16,7 @@ public class EmailController {
     @PostMapping("/send")
     public String sendEmail(@RequestBody EmailRequestDto dto) {
         try {
-            String cleanEmail = dto.getEmail().trim().toUpperCase();
+            String cleanEmail = dto.getEmail().trim();
             String code = emailService.createCode();
             emailService.sendEmail(cleanEmail, code);
             emailService.saveCode(cleanEmail, code);
@@ -29,7 +29,7 @@ public class EmailController {
 
     @PostMapping("/verify")
     public String verifyEmail(@RequestBody EmailRequestDto dto) {
-        String cleanEmail = dto.getEmail().trim().toUpperCase();
+        String cleanEmail = dto.getEmail().trim();
         boolean result = emailService.verifyCode(cleanEmail, dto.getCode());
 
         if (result) {
