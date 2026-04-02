@@ -27,17 +27,17 @@ public class CompetitionController {
     }
 
     @PostMapping("/{competitionId}/join")
-public ResponseEntity<String> joinCompetition(
-        @PathVariable Long competitionId,
-        @RequestParam Long userId
-) {
-    try {
-        competitionService.joinCompetition(competitionId, userId);
-        return ResponseEntity.ok("참가 완료");
-    } catch (RuntimeException e) {
-        return ResponseEntity.badRequest().body(e.getMessage());
+    public ResponseEntity<String> joinCompetition(
+            @PathVariable Long competitionId,
+            @RequestParam Long userId
+    ) {
+        try {
+            competitionService.joinCompetition(competitionId, userId);
+            return ResponseEntity.ok("참가 완료");
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
     }
-}
 
     @GetMapping("/my")
     public ResponseEntity<List<Long>> getMyCompetitions(@RequestParam Long userId) {
