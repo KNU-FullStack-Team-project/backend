@@ -1,6 +1,7 @@
 package org.team12.teamproject.service;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.team12.teamproject.dto.AccountDashboardDto;
 import org.team12.teamproject.entity.Account;
@@ -18,6 +19,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class AccountService {
@@ -73,11 +75,14 @@ public class AccountService {
         NumberFormat currencyFormat = NumberFormat.getCurrencyInstance(Locale.KOREA);
 
         for (Holding h : holdingsList) {
-            String currentPriceStr = stockService.getStockDetail(h.getStock().getStockCode()).getCurrentPrice();
             BigDecimal currentPrice = BigDecimal.ZERO;
-            try { 
-                currentPrice = new BigDecimal(currentPriceStr); 
-            } catch(Exception ignored){}
+            try {
+                String currentPriceStr = stockService.getStockDetail(h.getStock().getStockCode()).getCurrentPrice();
+                currentPrice = new BigDecimal(currentPriceStr);
+            } catch (Exception e) {
+                log.warn("주식 가격 조회 실패 ({}): {}", h.getStock().getStockCode(), e.getMessage());
+                // 가격 조회 실패 시 해당 종목은 0원으로 계산하거나 이전 로직 유지(여기서는 0원 처리)
+            }
 
             BigDecimal holdingValue = currentPrice.multiply(BigDecimal.valueOf(h.getQuantity()));
             BigDecimal investedValue = h.getAverageBuyPrice().multiply(BigDecimal.valueOf(h.getQuantity()));
@@ -90,6 +95,7 @@ public class AccountService {
                     .quantity(h.getQuantity())
                     .averageBuyPrice(currencyFormat.format(h.getAverageBuyPrice()))
                     .currentPrice(currencyFormat.format(currentPrice))
+                    .holdingValue(currencyFormat.format(holdingValue))
                     .build());
         }
 

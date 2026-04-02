@@ -28,5 +28,6 @@ public class AccountDashboardDto {
         private Long quantity;
         private String averageBuyPrice;
         private String currentPrice;
+        private String holdingValue;
     }
 }

@@ -46,11 +46,13 @@ public class EmailService {
     // 인증번호 검증
     public boolean verifyCode(String email, String code) {
         String cleanEmail = email != null ? email.trim().toLowerCase() : null;
-        if (cleanEmail == null) return false;
-        
+        if (cleanEmail == null)
+            return false;
+
         String savedCode = emailCodeMap.get(cleanEmail);
-        if (savedCode == null) return false;
-        
+        if (savedCode == null)
+            return false;
+
         boolean result = savedCode.equals(code);
         if (result) {
             verifiedEmailMap.put(cleanEmail, true);
@@ -61,7 +63,8 @@ public class EmailService {
     // 이메일 인증 여부 확인
     public boolean isVerified(String email) {
         String cleanEmail = email != null ? email.trim().toLowerCase() : null;
-        if (cleanEmail == null) return false;
+        if (cleanEmail == null)
+            return false;
         return verifiedEmailMap.getOrDefault(cleanEmail, false);
     }
 
