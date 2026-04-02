@@ -93,6 +93,10 @@ public class UserService {
             throw new RuntimeException("비활성화된 계정입니다.");
         }
 
+        user.setLastLoginAt(LocalDateTime.now());
+        user.setUpdatedAt(LocalDateTime.now());
+        userRepository.save(user);
+
         return new LoginResponseDto(
                 user.getId(),
                 user.getEmail(),
