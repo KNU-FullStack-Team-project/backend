@@ -22,31 +22,39 @@ public class CompetitionService {
     private final JdbcTemplate jdbcTemplate;
 
     public List<CompetitionListResponseDto> getCompetitionList() {
-        String sql = """
-                SELECT c.competition_id,
-                       c.title,
-                       c.description,
-                       c.status,
-                       c.start_at,
-                       c.end_at,
-                       COUNT(cp.competition_id) AS participant_count
-                FROM competitions c
-                LEFT JOIN competition_participants cp
-                  ON c.competition_id = cp.competition_id
-                GROUP BY c.competition_id, c.title, c.description, c.status, c.start_at, c.end_at
-                ORDER BY c.competition_id
-                """;
+    String sql = """
+            SELECT c.competition_id,
+                   c.title,
+                   c.description,
+                   c.status,
+                   c.start_at,
+                   c.end_at,
+                   c.max_participants,
+                   COUNT(cp.competition_id) AS participant_count
+            FROM competitions c
+            LEFT JOIN competition_participants cp
+              ON c.competition_id = cp.competition_id
+            GROUP BY c.competition_id,
+                     c.title,
+                     c.description,
+                     c.status,
+                     c.start_at,
+                     c.end_at,
+                     c.max_participants
+            ORDER BY c.competition_id
+            """;
 
-        return jdbcTemplate.query(sql, (rs, rowNum) -> new CompetitionListResponseDto(
-                rs.getLong("competition_id"),
-                rs.getString("title"),
-                rs.getString("description"),
-                rs.getString("status"),
-                toLocalDateTime(rs.getTimestamp("start_at")),
-                toLocalDateTime(rs.getTimestamp("end_at")),
-                rs.getInt("participant_count")
-        ));
-    }
+    return jdbcTemplate.query(sql, (rs, rowNum) -> new CompetitionListResponseDto(
+            rs.getLong("competition_id"),
+            rs.getString("title"),
+            rs.getString("description"),
+            rs.getString("status"),
+            toLocalDateTime(rs.getTimestamp("start_at")),
+            toLocalDateTime(rs.getTimestamp("end_at")),
+            rs.getObject("max_participants") != null ? rs.getInt("max_participants") : null,
+            rs.getInt("participant_count")
+    ));
+}
 
     public CompetitionDetailResponseDto getCompetitionDetail(Long competitionId) {
         String sql = """

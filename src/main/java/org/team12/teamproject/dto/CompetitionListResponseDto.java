@@ -15,5 +15,6 @@ public class CompetitionListResponseDto {
     private String status;
     private LocalDateTime startAt;
     private LocalDateTime endAt;
+    private Integer maxParticipants;
     private Integer participantCount;
 }
