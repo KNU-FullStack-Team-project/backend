@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.team12.teamproject.dto.CompetitionDetailResponseDto;
 import org.team12.teamproject.dto.CompetitionListResponseDto;
+import org.team12.teamproject.dto.CompetitionParticipantDto;
 import org.team12.teamproject.dto.CompetitionSaveRequestDto;
 
 import java.math.BigDecimal;
@@ -399,4 +400,32 @@ public class CompetitionService {
     private LocalDateTime toLocalDateTime(Timestamp timestamp) {
         return timestamp != null ? timestamp.toLocalDateTime() : null;
     }
+    public List<CompetitionParticipantDto> getParticipants(Long competitionId) {
+
+    String sql = """
+        SELECT u.user_id,
+               u.email,
+               u.nickname,
+               cp.account_id,
+               cp.joined_at,
+               cp.participation_status
+        FROM competition_participants cp
+        JOIN users u ON cp.user_id = u.user_id
+        WHERE cp.competition_id = ?
+        ORDER BY cp.joined_at DESC
+        """;
+
+    return jdbcTemplate.query(
+            sql,
+            new Object[]{competitionId},
+            (rs, rowNum) -> new CompetitionParticipantDto(
+                    rs.getLong("user_id"),
+                    rs.getString("email"),
+                    rs.getString("nickname"),
+                    rs.getLong("account_id"),
+                    toLocalDateTime(rs.getTimestamp("joined_at")),
+                    rs.getString("participation_status")
+            )
+    );
+}
 }

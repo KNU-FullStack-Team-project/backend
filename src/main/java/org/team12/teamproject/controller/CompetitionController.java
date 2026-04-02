@@ -5,6 +5,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.team12.teamproject.dto.CompetitionDetailResponseDto;
 import org.team12.teamproject.dto.CompetitionListResponseDto;
+import org.team12.teamproject.dto.CompetitionParticipantDto;
 import org.team12.teamproject.service.CompetitionService;
 
 import java.util.List;
@@ -43,4 +44,11 @@ public class CompetitionController {
     public ResponseEntity<List<Long>> getMyCompetitions(@RequestParam Long userId) {
         return ResponseEntity.ok(competitionService.getMyCompetitionIds(userId));
     }
+    
+    @GetMapping("/{competitionId}/participants")
+public ResponseEntity<List<CompetitionParticipantDto>> getParticipants(
+        @PathVariable Long competitionId
+) {
+    return ResponseEntity.ok(competitionService.getParticipants(competitionId));
+}
 }
