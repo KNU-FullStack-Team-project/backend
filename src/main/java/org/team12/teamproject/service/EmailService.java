@@ -5,9 +5,9 @@ import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Service;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 @RequiredArgsConstructor
@@ -15,8 +15,8 @@ public class EmailService {
 
     private final JavaMailSender mailSender;
 
-    private final Map<String, String> emailCodeMap = new HashMap<>();
-    private final Map<String, Boolean> verifiedEmailMap = new HashMap<>();
+    private final Map<String, String> emailCodeMap = new ConcurrentHashMap<>();
+    private final Map<String, Boolean> verifiedEmailMap = new ConcurrentHashMap<>();
 
     // 인증번호 생성
     public String createCode() {
@@ -36,14 +36,18 @@ public class EmailService {
 
     // 인증번호 저장
     public void saveCode(String email, String code) {
-        String cleanEmail = email != null ? email.trim() : null;
-        emailCodeMap.put(cleanEmail, code);
-        verifiedEmailMap.put(cleanEmail, false);
+        String cleanEmail = email != null ? email.trim().toLowerCase() : null;
+        if (cleanEmail != null) {
+            emailCodeMap.put(cleanEmail, code);
+            verifiedEmailMap.put(cleanEmail, false);
+        }
     }
 
     // 인증번호 검증
     public boolean verifyCode(String email, String code) {
-        String cleanEmail = email != null ? email.trim() : null;
+        String cleanEmail = email != null ? email.trim().toLowerCase() : null;
+        if (cleanEmail == null) return false;
+        
         String savedCode = emailCodeMap.get(cleanEmail);
         if (savedCode == null) return false;
         
@@ -56,14 +60,17 @@ public class EmailService {
 
     // 이메일 인증 여부 확인
     public boolean isVerified(String email) {
-        String cleanEmail = email != null ? email.trim() : null;
+        String cleanEmail = email != null ? email.trim().toLowerCase() : null;
+        if (cleanEmail == null) return false;
         return verifiedEmailMap.getOrDefault(cleanEmail, false);
     }
 
     // 인증 정보 삭제
     public void clearVerification(String email) {
-        String cleanEmail = email != null ? email.trim() : null;
-        emailCodeMap.remove(cleanEmail);
-        verifiedEmailMap.remove(cleanEmail);
+        String cleanEmail = email != null ? email.trim().toLowerCase() : null;
+        if (cleanEmail != null) {
+            emailCodeMap.remove(cleanEmail);
+            verifiedEmailMap.remove(cleanEmail);
+        }
     }
 }

@@ -9,11 +9,12 @@ import org.team12.teamproject.entity.User;
 
 public interface UserRepository extends JpaRepository<User, Long> {
 
-    @Query("SELECT COUNT(u) FROM User u WHERE u.email = :email")
+    @Query("SELECT COUNT(u) FROM User u WHERE LOWER(u.email) = LOWER(:email)")
     long countByEmail(@Param("email") String email);
 
     @Query("SELECT COUNT(u) FROM User u WHERE u.nickname = :nickname")
     long countByNickname(@Param("nickname") String nickname);
 
-    Optional<User> findByEmail(String email);
+    @Query("SELECT u FROM User u WHERE LOWER(u.email) = LOWER(:email)")
+    Optional<User> findByEmail(@Param("email") String email);
 }

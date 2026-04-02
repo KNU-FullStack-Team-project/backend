@@ -27,7 +27,8 @@ public class UserService {
     private final PasswordEncoder passwordEncoder;
 
     public String signup(SignupRequestDto dto) {
-        String email = dto.getEmail().trim();
+        String email = dto.getEmail() != null ? dto.getEmail().trim().toLowerCase() : "";
+        if (email.isEmpty()) return "이메일을 입력해주세요.";
 
         if (!emailService.isVerified(email)) {
             return "이메일 인증을 먼저 완료해주세요.";
@@ -80,7 +81,8 @@ public class UserService {
     }
 
     public LoginResponseDto login(LoginRequestDto dto) {
-        User user = userRepository.findByEmail(dto.getEmail().trim())
+        String email = dto.getEmail() != null ? dto.getEmail().trim().toLowerCase() : "";
+        User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new RuntimeException("회원정보가 일치하지 않습니다."));
 
         if (!matchesPassword(dto.getPassword(), user.getPasswordHash())) {
@@ -104,7 +106,7 @@ public class UserService {
             return "이메일을 입력해주세요.";
         }
 
-        String cleanEmail = email.trim();
+        String cleanEmail = email.trim().toLowerCase();
         if (userRepository.countByEmail(cleanEmail) > 0) {
             return "이미 사용 중인 이메일입니다.";
         }
@@ -113,14 +115,15 @@ public class UserService {
     }
 
     public UserProfileResponseDto getUserProfile(String email) {
-        User user = userRepository.findByEmail(email.trim())
+        String cleanEmail = email != null ? email.trim().toLowerCase() : "";
+        User user = userRepository.findByEmail(cleanEmail)
                 .orElseThrow(() -> new RuntimeException("회원정보가 일치하지 않습니다."));
 
         return toUserProfile(user);
     }
 
     public String changePassword(ChangePasswordRequestDto dto) {
-        String email = dto.getEmail() != null ? dto.getEmail().trim() : "";
+        String email = dto.getEmail() != null ? dto.getEmail().trim().toLowerCase() : "";
         String currentPassword = dto.getCurrentPassword();
         String newPassword = dto.getNewPassword();
 
