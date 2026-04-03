@@ -3,6 +3,7 @@ package org.team12.teamproject.controller;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 import org.team12.teamproject.dto.ChangePasswordRequestDto;
 import org.team12.teamproject.dto.LoginRequestDto;
 import org.team12.teamproject.dto.LoginResponseDto;
@@ -40,6 +41,14 @@ public class UserController {
     @GetMapping("/profile")
     public ResponseEntity<UserProfileResponseDto> getProfile(@RequestParam String email) {
         return ResponseEntity.ok(userService.getUserProfile(email));
+    }
+
+    @PostMapping("/profile-image")
+    public ResponseEntity<UserProfileResponseDto> updateProfileImage(
+            @RequestParam String email,
+            @RequestPart("image") MultipartFile image
+    ) {
+        return ResponseEntity.ok(userService.updateProfileImage(email, image));
     }
 
     @PostMapping("/change-password")

@@ -5,6 +5,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 import org.team12.teamproject.dto.ChangePasswordRequestDto;
 import org.team12.teamproject.dto.LoginRequestDto;
 import org.team12.teamproject.dto.LoginResponseDto;
@@ -17,7 +18,13 @@ import org.team12.teamproject.entity.User;
 import org.team12.teamproject.repository.AccountRepository;
 import org.team12.teamproject.repository.UserRepository;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.IOException;
 import java.math.BigDecimal;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -183,6 +190,48 @@ public class UserService {
         return toUserProfile(user);
     }
 
+    public UserProfileResponseDto updateProfileImage(String email, MultipartFile image) {
+        String cleanEmail = email != null ? email.trim() : "";
+        if (cleanEmail.isEmpty()) {
+            throw new RuntimeException("회원 정보를 찾을 수 없습니다.");
+        }
+
+        if (image == null || image.isEmpty()) {
+            throw new RuntimeException("프로필 사진을 선택해 주세요.");
+        }
+
+        String contentType = image.getContentType();
+        if (!"image/png".equalsIgnoreCase(contentType)
+                && !"image/jpeg".equalsIgnoreCase(contentType)
+                && !"image/jpg".equalsIgnoreCase(contentType)) {
+            throw new RuntimeException("PNG, JPG, JPEG 파일만 업로드할 수 있습니다.");
+        }
+
+        User user = userRepository.findByEmail(cleanEmail)
+                .orElseThrow(() -> new RuntimeException("회원 정보를 찾을 수 없습니다."));
+
+        try {
+            Path profileDirectory = getProfileDirectory();
+            Files.createDirectories(profileDirectory);
+
+            BufferedImage profileImage = ImageIO.read(image.getInputStream());
+            if (profileImage == null) {
+                throw new RuntimeException("이미지 파일을 읽을 수 없습니다.");
+            }
+
+            Path profileImagePath = profileDirectory.resolve(user.getId() + ".png");
+            ImageIO.write(profileImage, "png", profileImagePath.toFile());
+
+            user.setProfileImageUrl("/profile/" + user.getId() + ".png");
+            user.setUpdatedAt(LocalDateTime.now());
+            userRepository.save(user);
+
+            return toUserProfile(user);
+        } catch (IOException e) {
+            throw new RuntimeException("프로필 사진 저장에 실패했습니다.");
+        }
+    }
+
     public String changePassword(ChangePasswordRequestDto dto) {
         String email = dto.getEmail() != null ? dto.getEmail().trim() : "";
         String currentPassword = dto.getCurrentPassword();
@@ -250,6 +299,9 @@ public class UserService {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new RuntimeException("회원정보가 일치하지 않습니다."));
 
+        deleteProfileImage(user.getId());
+
+        user.setProfileImageUrl(null);
         user.setStatus("QUIT");
         user.setWithdrawnAt(LocalDateTime.now());
         user.setUpdatedAt(LocalDateTime.now());
@@ -299,6 +351,7 @@ public class UserService {
                 .id(user.getId())
                 .email(user.getEmail())
                 .nickname(user.getNickname())
+                .profileImageUrl(user.getProfileImageUrl())
                 .role(user.getRole())
                 .status(user.getStatus())
                 .createdAt(user.getCreatedAt() != null ? user.getCreatedAt().toString() : null)
@@ -306,4 +359,26 @@ public class UserService {
                 .accountCount(accounts.size())
                 .build();
     }
+
+    private Path getProfileDirectory() {
+        Path backendProfileDirectory = Paths.get("backend", "profile");
+        if (Files.exists(Paths.get("backend")) || Files.exists(backendProfileDirectory)) {
+            return backendProfileDirectory;
+        }
+
+        return Paths.get("profile");
+    }
+
+    private void deleteProfileImage(Long userId) {
+        if (userId == null) {
+            return;
+        }
+
+        try {
+            Files.deleteIfExists(getProfileDirectory().resolve(userId + ".png"));
+        } catch (IOException e) {
+            throw new RuntimeException("프로필 사진 삭제에 실패했습니다.");
+        }
+    }
+
 }
