@@ -3,7 +3,10 @@ package org.team12.teamproject.service;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.team12.teamproject.dto.AccountDashboardDto;
+import org.team12.teamproject.dto.AccountDepositRequestDto;
+import org.team12.teamproject.dto.MyAccountBalanceDto;
 import org.team12.teamproject.entity.Account;
 import org.team12.teamproject.entity.Holding;
 import org.team12.teamproject.repository.AccountRepository;
@@ -115,6 +118,46 @@ public class AccountService {
                 .totalProfitAmount((totalProfit.compareTo(BigDecimal.ZERO) >= 0 ? "+" : "") + currencyFormat.format(totalProfit))
                 .totalReturnRate((returnRate.compareTo(BigDecimal.ZERO) >= 0 ? "+" : "") + String.format("%.2f", returnRate) + "%")
                 .holdings(holdingDtos)
+                .build();
+    }
+
+    public List<MyAccountBalanceDto> getMyAccountBalancesByEmail(String email) {
+        if (email == null) throw new IllegalArgumentException("Email is required");
+
+        String cleanEmail = email.trim();
+        User user = userRepository.findByEmail(cleanEmail)
+                .orElseThrow(() -> new IllegalArgumentException("User not found: " + cleanEmail));
+        List<Account> accounts = accountRepository.findByUserId(user.getId());
+        NumberFormat currencyFormat = NumberFormat.getCurrencyInstance(Locale.KOREA);
+
+        return accounts.stream()
+                .map(account -> MyAccountBalanceDto.builder()
+                        .accountId(account.getId())
+                        .accountName(account.getAccountName())
+                        .accountType(account.getAccountType())
+                        .cashBalance(currencyFormat.format(account.getCashBalance()))
+                        .build())
+                .toList();
+    }
+
+    @Transactional
+    public MyAccountBalanceDto depositToAccount(Long accountId, AccountDepositRequestDto dto) {
+        if (dto == null || dto.getAmount() == null || dto.getAmount().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("추가할 금액을 올바르게 선택해 주세요.");
+        }
+
+        Account account = accountRepository.findById(accountId)
+                .orElseThrow(() -> new IllegalArgumentException("계좌를 찾을 수 없습니다."));
+
+        account.addBalance(dto.getAmount());
+        Account savedAccount = accountRepository.save(account);
+        NumberFormat currencyFormat = NumberFormat.getCurrencyInstance(Locale.KOREA);
+
+        return MyAccountBalanceDto.builder()
+                .accountId(savedAccount.getId())
+                .accountName(savedAccount.getAccountName())
+                .accountType(savedAccount.getAccountType())
+                .cashBalance(currencyFormat.format(savedAccount.getCashBalance()))
                 .build();
     }
 }

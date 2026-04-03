@@ -62,5 +62,6 @@ public class Account {
 
     public void addBalance(BigDecimal amount) {
         this.cashBalance = this.cashBalance.add(amount);
+        this.updatedAt = LocalDateTime.now();
     }
 }

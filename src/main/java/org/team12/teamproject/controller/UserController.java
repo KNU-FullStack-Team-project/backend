@@ -8,6 +8,7 @@ import org.team12.teamproject.dto.LoginRequestDto;
 import org.team12.teamproject.dto.LoginResponseDto;
 import org.team12.teamproject.dto.SignupRequestDto;
 import org.team12.teamproject.dto.UserProfileResponseDto;
+import org.team12.teamproject.dto.WithdrawUserRequestDto;
 import org.team12.teamproject.service.UserService;
 
 import java.util.Map;
@@ -44,5 +45,15 @@ public class UserController {
     @PostMapping("/change-password")
     public ResponseEntity<String> changePassword(@RequestBody ChangePasswordRequestDto dto) {
         return ResponseEntity.ok(userService.changePassword(dto));
+    }
+
+    @PostMapping("/withdraw")
+    public ResponseEntity<String> withdraw(@RequestBody WithdrawUserRequestDto dto) {
+        return ResponseEntity.ok(userService.withdraw(dto));
+    }
+
+    @ExceptionHandler(RuntimeException.class)
+    public ResponseEntity<String> handleRuntimeException(RuntimeException e) {
+        return ResponseEntity.badRequest().body(e.getMessage());
     }
 }
