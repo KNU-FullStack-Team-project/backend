@@ -9,6 +9,7 @@ import org.team12.teamproject.dto.ChangePasswordRequestDto;
 import org.team12.teamproject.dto.LoginRequestDto;
 import org.team12.teamproject.dto.LoginResponseDto;
 import org.team12.teamproject.dto.SignupRequestDto;
+import org.team12.teamproject.dto.AdminUpdateUserRequestDto;
 import org.team12.teamproject.dto.UserProfileResponseDto;
 import org.team12.teamproject.dto.WithdrawUserRequestDto;
 import org.team12.teamproject.entity.Account;
@@ -218,6 +219,26 @@ public class UserService {
         return userRepository.findAll().stream()
                 .map(this::toUserProfile)
                 .toList();
+    }
+
+    public UserProfileResponseDto updateAdminUser(Long userId, AdminUpdateUserRequestDto dto) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다."));
+
+        if (!"USER".equals(dto.getRole()) && !"ADMIN".equals(dto.getRole())) {
+            throw new RuntimeException("권한 값이 올바르지 않습니다.");
+        }
+
+        if (!"ACTIVE".equals(dto.getStatus()) && !"SUSPENDED".equals(dto.getStatus())) {
+            throw new RuntimeException("상태 값이 올바르지 않습니다.");
+        }
+
+        user.setRole(dto.getRole());
+        user.setStatus(dto.getStatus());
+        user.setSuspendedAt("SUSPENDED".equals(dto.getStatus()) ? LocalDateTime.now() : null);
+        user.setUpdatedAt(LocalDateTime.now());
+
+        return toUserProfile(userRepository.save(user));
     }
 
     public String withdraw(WithdrawUserRequestDto dto) {
