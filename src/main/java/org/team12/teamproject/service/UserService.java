@@ -1,13 +1,16 @@
 package org.team12.teamproject.service;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.team12.teamproject.dto.ChangePasswordRequestDto;
 import org.team12.teamproject.dto.LoginRequestDto;
 import org.team12.teamproject.dto.LoginResponseDto;
 import org.team12.teamproject.dto.SignupRequestDto;
 import org.team12.teamproject.dto.UserProfileResponseDto;
+import org.team12.teamproject.dto.WithdrawUserRequestDto;
 import org.team12.teamproject.entity.Account;
 import org.team12.teamproject.entity.User;
 import org.team12.teamproject.repository.AccountRepository;
@@ -25,7 +28,9 @@ public class UserService {
     private final AccountRepository accountRepository;
     private final EmailService emailService;
     private final PasswordEncoder passwordEncoder;
+    private final JdbcTemplate jdbcTemplate;
 
+    @Transactional
     public String signup(SignupRequestDto dto) {
         String email = dto.getEmail() != null ? dto.getEmail().trim() : "";
         if (email.isEmpty()) return "이메일을 입력해주세요.";
@@ -34,8 +39,38 @@ public class UserService {
             return "이메일 인증을 먼저 완료해주세요.";
         }
 
-        if (userRepository.countByEmail(email) > 0) {
+        User existingUser = userRepository.findByEmail(email).orElse(null);
+
+        if (isEmailInUseByActiveUser(email)) {
             return "이미 사용 중인 이메일입니다.";
+        }
+
+        if (existingUser != null && "QUIT".equalsIgnoreCase(existingUser.getStatus())) {
+            if (!dto.getNickname().equals(existingUser.getNickname())
+                    && userRepository.countByNickname(dto.getNickname()) > 0) {
+                return "이미 사용 중인 닉네임입니다.";
+            }
+
+            resetUserAssets(existingUser.getId());
+
+            existingUser.setPasswordHash(passwordEncoder.encode(dto.getPassword()));
+            existingUser.setNickname(dto.getNickname());
+            existingUser.setRole("USER");
+            existingUser.setStatus("ACTIVE");
+            existingUser.setMarketingConsent(dto.getMarketingConsent() != null && dto.getMarketingConsent());
+            existingUser.setEmailVerified(true);
+            existingUser.setWithdrawnAt(null);
+            existingUser.setSuspendedAt(null);
+            existingUser.setDeletedAt(null);
+            existingUser.setCreatedAt(LocalDateTime.now());
+            existingUser.setUpdatedAt(LocalDateTime.now());
+            userRepository.save(existingUser);
+
+            createDefaultAccount(existingUser);
+
+            emailService.clearVerification(dto.getEmail());
+
+            return "회원가입 완료";
         }
 
         if (userRepository.countByNickname(dto.getNickname()) > 0) {
@@ -80,12 +115,29 @@ public class UserService {
         accountRepository.save(account);
     }
 
+    private void resetUserAssets(Long userId) {
+        jdbcTemplate.update("DELETE FROM competition_participants WHERE user_id = ?", userId);
+        jdbcTemplate.update(
+                "DELETE FROM orders WHERE account_id IN (SELECT account_id FROM accounts WHERE user_id = ?)",
+                userId
+        );
+        jdbcTemplate.update(
+                "DELETE FROM holdings WHERE account_id IN (SELECT account_id FROM accounts WHERE user_id = ?)",
+                userId
+        );
+        jdbcTemplate.update("DELETE FROM accounts WHERE user_id = ?", userId);
+    }
+
     public LoginResponseDto login(LoginRequestDto dto) {
         String email = dto.getEmail() != null ? dto.getEmail().trim() : "";
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new RuntimeException("회원정보가 일치하지 않습니다."));
 
         if (!matchesPassword(dto.getPassword(), user.getPasswordHash())) {
+            throw new RuntimeException("회원정보가 일치하지 않습니다.");
+        }
+
+        if ("QUIT".equalsIgnoreCase(user.getStatus())) {
             throw new RuntimeException("회원정보가 일치하지 않습니다.");
         }
 
@@ -111,7 +163,7 @@ public class UserService {
         }
 
         String cleanEmail = email.trim();
-        if (userRepository.countByEmail(cleanEmail) > 0) {
+        if (isEmailInUseByActiveUser(cleanEmail)) {
             return "이미 사용 중인 이메일입니다.";
         }
 
@@ -166,6 +218,25 @@ public class UserService {
         return userRepository.findAll().stream()
                 .map(this::toUserProfile)
                 .toList();
+    }
+
+    public String withdraw(WithdrawUserRequestDto dto) {
+        String email = dto.getEmail() != null ? dto.getEmail().trim() : "";
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("회원정보가 일치하지 않습니다."));
+
+        user.setStatus("QUIT");
+        user.setWithdrawnAt(LocalDateTime.now());
+        user.setUpdatedAt(LocalDateTime.now());
+        userRepository.save(user);
+
+        return "회원 탈퇴가 완료되었습니다.";
+    }
+
+    private boolean isEmailInUseByActiveUser(String email) {
+        return userRepository.findByEmail(email)
+                .map(user -> !"QUIT".equalsIgnoreCase(user.getStatus()))
+                .orElse(false);
     }
 
     private boolean matchesPassword(String rawPassword, String storedPassword) {
