@@ -5,7 +5,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.team12.teamproject.dto.AccountDashboardDto;
-import org.team12.teamproject.dto.AccountDepositRequestDto;
 import org.team12.teamproject.dto.MyAccountBalanceDto;
 import org.team12.teamproject.entity.Account;
 import org.team12.teamproject.entity.Holding;
@@ -141,15 +140,15 @@ public class AccountService {
     }
 
     @Transactional
-    public MyAccountBalanceDto depositToAccount(Long accountId, AccountDepositRequestDto dto) {
-        if (dto == null || dto.getAmount() == null || dto.getAmount().compareTo(BigDecimal.ZERO) <= 0) {
-            throw new IllegalArgumentException("추가할 금액을 올바르게 선택해 주세요.");
-        }
-
+    public MyAccountBalanceDto resetMainAccountBalance(Long accountId) {
         Account account = accountRepository.findById(accountId)
                 .orElseThrow(() -> new IllegalArgumentException("계좌를 찾을 수 없습니다."));
 
-        account.addBalance(dto.getAmount());
+        if (!"MAIN".equals(account.getAccountType())) {
+            throw new IllegalArgumentException("기본 계좌만 예수금을 리셋할 수 있습니다.");
+        }
+
+        account.resetCashBalance(new BigDecimal("5000000"));
         Account savedAccount = accountRepository.save(account);
         NumberFormat currencyFormat = NumberFormat.getCurrencyInstance(Locale.KOREA);
 

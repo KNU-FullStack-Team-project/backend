@@ -142,6 +142,10 @@ public class UserService {
             throw new RuntimeException("회원정보가 일치하지 않습니다.");
         }
 
+        if ("SUSPENDED".equalsIgnoreCase(user.getStatus())) {
+            throw new RuntimeException("정지된 계정입니다.");
+        }
+
         if (!"ACTIVE".equalsIgnoreCase(user.getStatus())) {
             throw new RuntimeException("비활성화된 계정입니다.");
         }
