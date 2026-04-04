@@ -8,6 +8,7 @@ import org.team12.teamproject.dto.CompetitionDetailResponseDto;
 import org.team12.teamproject.dto.CompetitionListResponseDto;
 import org.team12.teamproject.dto.CompetitionParticipantDto;
 import org.team12.teamproject.dto.CompetitionSaveRequestDto;
+import org.team12.teamproject.dto.CompetitionRankingResponseDto;
 
 import java.math.BigDecimal;
 import java.sql.Timestamp;
@@ -443,6 +444,43 @@ public class CompetitionService {
                     rs.getLong("account_id"),
                     toLocalDateTime(rs.getTimestamp("joined_at")),
                     rs.getString("participation_status")
+            )
+    );
+}
+public List<CompetitionRankingResponseDto> getCompetitionRanking(Long competitionId) {
+
+    String sql = """
+        SELECT
+            u.user_id,
+            u.nickname,
+            a.account_id,
+            a.cash_balance,
+            c.initial_seed_money,
+            CASE
+                WHEN c.initial_seed_money = 0 THEN 0
+                ELSE ROUND(
+                    (a.cash_balance - c.initial_seed_money)
+                    / c.initial_seed_money * 100,
+                    2
+                )
+            END AS return_rate,
+            (a.cash_balance - c.initial_seed_money) AS profit_amount
+        FROM competition_participants cp
+        JOIN users u ON cp.user_id = u.user_id
+        JOIN accounts a ON cp.account_id = a.account_id
+        JOIN competitions c ON cp.competition_id = c.competition_id
+        WHERE cp.competition_id = ?
+        ORDER BY return_rate DESC
+        """;
+
+    return jdbcTemplate.query(
+            sql,
+            new Object[]{competitionId},
+            (rs, rowNum) -> new CompetitionRankingResponseDto(
+                    rs.getLong("user_id"),
+                    rs.getString("nickname"),
+                    rs.getBigDecimal("return_rate"),
+                    rs.getBigDecimal("profit_amount")
             )
     );
 }
