@@ -10,12 +10,15 @@ import org.team12.teamproject.entity.Holding;
 import org.team12.teamproject.entity.Order;
 import org.team12.teamproject.entity.Stock;
 import org.team12.teamproject.repository.AccountRepository;
+import org.team12.teamproject.dto.OrderResponseDto;
 import org.team12.teamproject.repository.HoldingRepository;
 import org.team12.teamproject.repository.OrderRepository;
 import org.team12.teamproject.repository.StockRepository;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -215,8 +218,22 @@ public class OrderService {
      * 사용자의 주문 내역 조회
      */
     @Transactional(readOnly = true)
-    public java.util.List<Order> getOrdersByAccountId(Long accountId) {
-        return orderRepository.findByAccountIdOrderByOrderedAtDesc(accountId);
+    public List<OrderResponseDto> getOrdersByAccountId(Long accountId) {
+        return orderRepository.findByAccountIdOrderByOrderedAtDesc(accountId).stream()
+                .map(order -> OrderResponseDto.builder()
+                        .id(order.getId())
+                        .stock(OrderResponseDto.StockInfo.builder()
+                                .stockCode(order.getStock().getStockCode())
+                                .stockName(order.getStock().getStockName())
+                                .build())
+                        .orderSide(order.getOrderSide())
+                        .orderType(order.getOrderType())
+                        .quantity(order.getQuantity())
+                        .price(order.getPrice())
+                        .orderStatus(order.getOrderStatus())
+                        .orderedAt(order.getOrderedAt())
+                        .build())
+                .collect(Collectors.toList());
     }
 
     /**

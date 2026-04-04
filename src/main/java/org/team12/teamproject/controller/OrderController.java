@@ -42,7 +42,7 @@ public class OrderController {
     @GetMapping
     public ResponseEntity<?> getOrders(@RequestParam(name = "accountId") Long accountId) {
         try {
-            return ResponseEntity.ok(orderService.getOrdersByAccountId(accountId));
+            return ResponseEntity.ok().body(orderService.getOrdersByAccountId(accountId));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("Failed to fetch orders: " + e.getMessage());
         }
