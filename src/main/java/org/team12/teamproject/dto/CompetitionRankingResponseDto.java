@@ -11,6 +11,7 @@ public class CompetitionRankingResponseDto {
 
     private Long userId;
     private String nickname;
+    private String profileImageUrl;
     private BigDecimal returnRate;
     private BigDecimal profitAmount;
 }

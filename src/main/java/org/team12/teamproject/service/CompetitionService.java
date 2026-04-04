@@ -10,6 +10,7 @@ import org.team12.teamproject.dto.CompetitionParticipantDto;
 import org.team12.teamproject.dto.CompetitionSaveRequestDto;
 import org.team12.teamproject.dto.CompetitionRankingResponseDto;
 
+
 import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
@@ -449,29 +450,54 @@ public class CompetitionService {
 }
 public List<CompetitionRankingResponseDto> getCompetitionRanking(Long competitionId) {
 
+    String statusSql = """
+            SELECT CASE
+                       WHEN SYSTIMESTAMP < start_at THEN 'SCHEDULED'
+                       WHEN SYSTIMESTAMP > end_at THEN 'ENDED'
+                       ELSE 'ONGOING'
+                   END AS status
+            FROM competitions
+            WHERE competition_id = ?
+            """;
+
+    String status = jdbcTemplate.queryForObject(
+            statusSql,
+            String.class,
+            competitionId
+    );
+
+    if (status == null) {
+        throw new RuntimeException("존재하지 않는 대회입니다.");
+    }
+
+    if ("SCHEDULED".equalsIgnoreCase(status)) {
+        throw new RuntimeException("아직 시작되지 않은 대회입니다.");
+    }
+
     String sql = """
-        SELECT
-            u.user_id,
-            u.nickname,
-            a.account_id,
-            a.cash_balance,
-            c.initial_seed_money,
-            CASE
-                WHEN c.initial_seed_money = 0 THEN 0
-                ELSE ROUND(
-                    (a.cash_balance - c.initial_seed_money)
-                    / c.initial_seed_money * 100,
-                    2
-                )
-            END AS return_rate,
-            (a.cash_balance - c.initial_seed_money) AS profit_amount
-        FROM competition_participants cp
-        JOIN users u ON cp.user_id = u.user_id
-        JOIN accounts a ON cp.account_id = a.account_id
-        JOIN competitions c ON cp.competition_id = c.competition_id
-        WHERE cp.competition_id = ?
-        ORDER BY return_rate DESC
-        """;
+    SELECT
+        u.user_id,
+        u.nickname,
+        u.profile_image_url,
+        SUM(a.cash_balance) AS total_asset,
+        c.initial_seed_money,
+        CASE
+            WHEN c.initial_seed_money = 0 THEN 0
+            ELSE ROUND(
+                (SUM(a.cash_balance) - c.initial_seed_money)
+                / c.initial_seed_money * 100,
+                2
+            )
+        END AS return_rate,
+        (SUM(a.cash_balance) - c.initial_seed_money) AS profit_amount
+    FROM competition_participants cp
+    JOIN users u ON cp.user_id = u.user_id
+    JOIN accounts a ON cp.account_id = a.account_id
+    JOIN competitions c ON cp.competition_id = c.competition_id
+    WHERE cp.competition_id = ?
+    GROUP BY u.user_id, u.nickname, u.profile_image_url, c.initial_seed_money
+    ORDER BY return_rate DESC
+    """;
 
     return jdbcTemplate.query(
             sql,
@@ -479,6 +505,7 @@ public List<CompetitionRankingResponseDto> getCompetitionRanking(Long competitio
             (rs, rowNum) -> new CompetitionRankingResponseDto(
                     rs.getLong("user_id"),
                     rs.getString("nickname"),
+                    rs.getString("profile_image_url"),
                     rs.getBigDecimal("return_rate"),
                     rs.getBigDecimal("profit_amount")
             )
