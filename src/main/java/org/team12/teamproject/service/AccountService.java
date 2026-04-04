@@ -2,7 +2,6 @@ package org.team12.teamproject.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.team12.teamproject.dto.AccountDashboardDto;
@@ -30,9 +29,11 @@ public class AccountService {
     private final AccountRepository accountRepository;
     private final HoldingRepository holdingRepository;
     private final StockService stockService;
+    private final FavoriteStockService favoriteStockService;
 
     private final UserRepository userRepository;
-    private final JdbcTemplate jdbcTemplate;
+
+    private static final NumberFormat CURRENCY_FORMAT = NumberFormat.getCurrencyInstance(Locale.KOREA);
 
     public Long getAccountIdByEmail(String email) {
         if (email == null) throw new IllegalArgumentException("Email is required");
@@ -64,11 +65,7 @@ public class AccountService {
         // 관심 종목 데이터 조회 추가
         List<AccountDashboardDto.FavoriteStockDto> favoriteStockDtos = new ArrayList<>();
         Long userId = account.getUser().getId();
-        List<String> favoriteSymbols = jdbcTemplate.queryForList(
-                "SELECT stock_symbol FROM favorite_stocks WHERE user_id = ?",
-                String.class,
-                userId
-        );
+        List<String> favoriteSymbols = favoriteStockService.getFavoriteSymbols(userId);
 
         for (String symbol : favoriteSymbols) {
             try {
@@ -120,9 +117,9 @@ public class AccountService {
             holdingDtos.add(AccountDashboardDto.HoldingItemDto.builder()
                     .stockName(h.getStock().getStockName())
                     .quantity(h.getQuantity())
-                    .averageBuyPrice(currencyFormat.format(h.getAverageBuyPrice()))
-                    .currentPrice(currencyFormat.format(currentPrice))
-                    .holdingValue(currencyFormat.format(holdingValue))
+                    .averageBuyPrice(CURRENCY_FORMAT.format(h.getAverageBuyPrice()))
+                    .currentPrice(CURRENCY_FORMAT.format(currentPrice))
+                    .holdingValue(CURRENCY_FORMAT.format(holdingValue))
                     .build());
         }
 
@@ -136,10 +133,10 @@ public class AccountService {
 
         return AccountDashboardDto.builder()
                 .accountId(accountId)
-                .totalAsset(currencyFormat.format(totalAsset))
-                .cashBalance(currencyFormat.format(cashBalance))
+                .totalAsset(CURRENCY_FORMAT.format(totalAsset))
+                .cashBalance(CURRENCY_FORMAT.format(cashBalance))
                 .rawCashBalance(cashBalance)
-                .totalProfitAmount((totalProfit.compareTo(BigDecimal.ZERO) >= 0 ? "+" : "") + currencyFormat.format(totalProfit))
+                .totalProfitAmount((totalProfit.compareTo(BigDecimal.ZERO) >= 0 ? "+" : "") + CURRENCY_FORMAT.format(totalProfit))
                 .totalReturnRate((returnRate.compareTo(BigDecimal.ZERO) >= 0 ? "+" : "") + String.format("%.2f", returnRate) + "%")
                 .holdings(holdingDtos)
                 .favoriteStocks(favoriteStockDtos)
@@ -153,14 +150,13 @@ public class AccountService {
         User user = userRepository.findByEmail(cleanEmail)
                 .orElseThrow(() -> new IllegalArgumentException("User not found: " + cleanEmail));
         List<Account> accounts = accountRepository.findByUserId(user.getId());
-        NumberFormat currencyFormat = NumberFormat.getCurrencyInstance(Locale.KOREA);
 
         return accounts.stream()
                 .map(account -> MyAccountBalanceDto.builder()
                         .accountId(account.getId())
                         .accountName(account.getAccountName())
                         .accountType(account.getAccountType())
-                        .cashBalance(currencyFormat.format(account.getCashBalance()))
+                        .cashBalance(CURRENCY_FORMAT.format(account.getCashBalance()))
                         .build())
                 .toList();
     }
@@ -176,13 +172,12 @@ public class AccountService {
 
         account.resetCashBalance(new BigDecimal("5000000"));
         Account savedAccount = accountRepository.save(account);
-        NumberFormat currencyFormat = NumberFormat.getCurrencyInstance(Locale.KOREA);
 
         return MyAccountBalanceDto.builder()
                 .accountId(savedAccount.getId())
                 .accountName(savedAccount.getAccountName())
                 .accountType(savedAccount.getAccountType())
-                .cashBalance(currencyFormat.format(savedAccount.getCashBalance()))
+                .cashBalance(CURRENCY_FORMAT.format(savedAccount.getCashBalance()))
                 .build();
     }
 }

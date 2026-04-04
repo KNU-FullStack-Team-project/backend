@@ -258,9 +258,7 @@ public class OrderService {
         // 3. Redis에서 주문 제거
         if ("QUEUED".equals(status)) {
             // MARKET 주문 (List)
-            String redisValue = order.getOrderSide() + ":" + order.getId();
-            // "MARKET_BUY:123" 형식인지 확인 필요. placeMarketBuyOrder에서는 "MARKET_BUY:" + order.getId()로 넣음.
-            String fullRedisValue = "MARKET_" + order.getOrderSide() + ":" + order.getId();
+            String fullRedisValue = "MARKET_" + order.getOrderSide().toUpperCase() + ":" + order.getId();
             redisTemplate.opsForList().remove(ORDER_QUEUE_KEY, 1, fullRedisValue);
         } else if ("PENDING".equals(status)) {
             // LIMIT 주문 (ZSet)
