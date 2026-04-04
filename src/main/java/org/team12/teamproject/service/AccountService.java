@@ -2,6 +2,7 @@ package org.team12.teamproject.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.team12.teamproject.dto.AccountDashboardDto;
@@ -31,6 +32,7 @@ public class AccountService {
     private final StockService stockService;
 
     private final UserRepository userRepository;
+    private final JdbcTemplate jdbcTemplate;
 
     public Long getAccountIdByEmail(String email) {
         if (email == null) throw new IllegalArgumentException("Email is required");
@@ -58,6 +60,29 @@ public class AccountService {
     public AccountDashboardDto getDashboard(Long accountId) {
         Account account = accountRepository.findById(accountId)
                 .orElseThrow(() -> new IllegalArgumentException("Account not found for id: " + accountId));
+
+        // 관심 종목 데이터 조회 추가
+        List<AccountDashboardDto.FavoriteStockDto> favoriteStockDtos = new ArrayList<>();
+        Long userId = account.getUser().getId();
+        List<String> favoriteSymbols = jdbcTemplate.queryForList(
+                "SELECT stock_symbol FROM favorite_stocks WHERE user_id = ?",
+                String.class,
+                userId
+        );
+
+        for (String symbol : favoriteSymbols) {
+            try {
+                var detail = stockService.getStockDetail(symbol);
+                favoriteStockDtos.add(AccountDashboardDto.FavoriteStockDto.builder()
+                        .name(detail.getName())
+                        .currentPrice(detail.getCurrentPrice())
+                        .changeRate(detail.getChangeRate())
+                        .volume(detail.getVolume())
+                        .build());
+            } catch (Exception e) {
+                log.warn("관심 종목 정보 조회 실패 ({}): {}", symbol, e.getMessage());
+            }
+        }
 
         BigDecimal cashBalance = account.getCashBalance();
         BigDecimal totalStockValue = BigDecimal.ZERO;
@@ -117,6 +142,7 @@ public class AccountService {
                 .totalProfitAmount((totalProfit.compareTo(BigDecimal.ZERO) >= 0 ? "+" : "") + currencyFormat.format(totalProfit))
                 .totalReturnRate((returnRate.compareTo(BigDecimal.ZERO) >= 0 ? "+" : "") + String.format("%.2f", returnRate) + "%")
                 .holdings(holdingDtos)
+                .favoriteStocks(favoriteStockDtos)
                 .build();
     }
 
