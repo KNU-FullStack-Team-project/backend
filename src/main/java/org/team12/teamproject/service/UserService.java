@@ -15,6 +15,7 @@ import org.team12.teamproject.dto.UserProfileResponseDto;
 import org.team12.teamproject.dto.WithdrawUserRequestDto;
 import org.team12.teamproject.entity.Account;
 import org.team12.teamproject.entity.User;
+import org.team12.teamproject.security.JwtUtil;
 import org.team12.teamproject.repository.AccountRepository;
 import org.team12.teamproject.repository.UserRepository;
 
@@ -37,6 +38,7 @@ public class UserService {
     private final EmailService emailService;
     private final PasswordEncoder passwordEncoder;
     private final JdbcTemplate jdbcTemplate;
+    private final JwtUtil jwtUtil;
 
     @Transactional
     public String signup(SignupRequestDto dto) {
@@ -161,12 +163,21 @@ public class UserService {
         user.setUpdatedAt(LocalDateTime.now());
         userRepository.save(user);
 
+        // 실제 JWT 생성
+        String token = jwtUtil.generateToken(user.getEmail(), user.getRole());
+
+        // 사용자의 기본 계좌 ID 조회 (마이페이지 등에서 즉시 사용 위함)
+        List<Account> accounts = accountRepository.findByUserId(user.getId());
+        Long accountId = accounts.isEmpty() ? null : accounts.get(0).getId();
+
         return new LoginResponseDto(
                 user.getId(),
                 user.getEmail(),
                 user.getNickname(),
                 user.getRole(),
-                "로그인 성공");
+                "로그인 성공",
+                token,
+                accountId);
     }
 
     public String checkEmail(String email) {
