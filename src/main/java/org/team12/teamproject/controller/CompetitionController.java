@@ -56,9 +56,15 @@ public class CompetitionController {
     }
 
     @GetMapping("/{competitionId}/ranking")
-    public ResponseEntity<List<CompetitionRankingResponseDto>> getCompetitionRanking(
+    public ResponseEntity<?> getCompetitionRanking(
             @PathVariable Long competitionId
     ) {
-        return ResponseEntity.ok(competitionService.getCompetitionRanking(competitionId));
+        try {
+            List<CompetitionRankingResponseDto> ranking =
+                    competitionService.getCompetitionRanking(competitionId);
+            return ResponseEntity.ok(ranking);
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
     }
 }

@@ -7,9 +7,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.team12.teamproject.dto.CompetitionDetailResponseDto;
 import org.team12.teamproject.dto.CompetitionListResponseDto;
 import org.team12.teamproject.dto.CompetitionParticipantDto;
-import org.team12.teamproject.dto.CompetitionSaveRequestDto;
 import org.team12.teamproject.dto.CompetitionRankingResponseDto;
-
+import org.team12.teamproject.dto.CompetitionSaveRequestDto;
 
 import java.math.BigDecimal;
 import java.sql.Timestamp;
@@ -24,89 +23,89 @@ public class CompetitionService {
     private final JdbcTemplate jdbcTemplate;
 
     public List<CompetitionListResponseDto> getCompetitionList() {
-    String sql = """
-            SELECT c.competition_id,
-                   c.title,
-                   c.description,
-                   CASE
-                       WHEN SYSTIMESTAMP < c.start_at THEN 'SCHEDULED'
-                       WHEN SYSTIMESTAMP > c.end_at THEN 'ENDED'
-                       ELSE 'ONGOING'
-                   END AS status,
-                   c.start_at,
-                   c.end_at,
-                   c.initial_seed_money,
-                   c.max_participants,
-                   COUNT(cp.competition_id) AS participant_count
-            FROM competitions c
-            LEFT JOIN competition_participants cp
-              ON c.competition_id = cp.competition_id
-            GROUP BY c.competition_id,
-                     c.title,
-                     c.description,
-                     c.start_at,
-                     c.end_at,
-                     c.initial_seed_money,
-                     c.max_participants
-            ORDER BY c.competition_id
-            """;
+        String sql = """
+                SELECT c.competition_id,
+                       c.title,
+                       c.description,
+                       CASE
+                           WHEN SYSTIMESTAMP < c.start_at THEN 'SCHEDULED'
+                           WHEN SYSTIMESTAMP > c.end_at THEN 'ENDED'
+                           ELSE 'ONGOING'
+                       END AS status,
+                       c.start_at,
+                       c.end_at,
+                       c.initial_seed_money,
+                       c.max_participants,
+                       COUNT(cp.competition_id) AS participant_count
+                FROM competitions c
+                LEFT JOIN competition_participants cp
+                  ON c.competition_id = cp.competition_id
+                GROUP BY c.competition_id,
+                         c.title,
+                         c.description,
+                         c.start_at,
+                         c.end_at,
+                         c.initial_seed_money,
+                         c.max_participants
+                ORDER BY c.competition_id
+                """;
 
-    return jdbcTemplate.query(sql, (rs, rowNum) -> new CompetitionListResponseDto(
-            rs.getLong("competition_id"),
-            rs.getString("title"),
-            rs.getString("description"),
-            rs.getString("status"),
-            toLocalDateTime(rs.getTimestamp("start_at")),
-            toLocalDateTime(rs.getTimestamp("end_at")),
-            rs.getBigDecimal("initial_seed_money"),
-            rs.getObject("max_participants") != null ? rs.getInt("max_participants") : null,
-            rs.getInt("participant_count")
-    ));
-}
+        return jdbcTemplate.query(sql, (rs, rowNum) -> new CompetitionListResponseDto(
+                rs.getLong("competition_id"),
+                rs.getString("title"),
+                rs.getString("description"),
+                rs.getString("status"),
+                toLocalDateTime(rs.getTimestamp("start_at")),
+                toLocalDateTime(rs.getTimestamp("end_at")),
+                rs.getBigDecimal("initial_seed_money"),
+                rs.getObject("max_participants") != null ? rs.getInt("max_participants") : null,
+                rs.getInt("participant_count")
+        ));
+    }
 
     public CompetitionDetailResponseDto getCompetitionDetail(Long competitionId) {
-    String sql = """
-            SELECT c.competition_id,
-                   c.title,
-                   c.description,
-                   CASE
-                       WHEN SYSTIMESTAMP < c.start_at THEN 'SCHEDULED'
-                       WHEN SYSTIMESTAMP > c.end_at THEN 'ENDED'
-                       ELSE 'ONGOING'
-                   END AS status,
-                   c.start_at,
-                   c.end_at,
-                   c.initial_seed_money,
-                   c.max_participants,
-                   COUNT(cp.competition_id) AS participant_count
-            FROM competitions c
-            LEFT JOIN competition_participants cp
-              ON c.competition_id = cp.competition_id
-            WHERE c.competition_id = ?
-            GROUP BY c.competition_id, c.title, c.description,
-                     c.start_at, c.end_at, c.initial_seed_money, c.max_participants
-            """;
+        String sql = """
+                SELECT c.competition_id,
+                       c.title,
+                       c.description,
+                       CASE
+                           WHEN SYSTIMESTAMP < c.start_at THEN 'SCHEDULED'
+                           WHEN SYSTIMESTAMP > c.end_at THEN 'ENDED'
+                           ELSE 'ONGOING'
+                       END AS status,
+                       c.start_at,
+                       c.end_at,
+                       c.initial_seed_money,
+                       c.max_participants,
+                       COUNT(cp.competition_id) AS participant_count
+                FROM competitions c
+                LEFT JOIN competition_participants cp
+                  ON c.competition_id = cp.competition_id
+                WHERE c.competition_id = ?
+                GROUP BY c.competition_id, c.title, c.description,
+                         c.start_at, c.end_at, c.initial_seed_money, c.max_participants
+                """;
 
-    List<CompetitionDetailResponseDto> result = jdbcTemplate.query(
-            sql,
-            new Object[]{competitionId},
-            (rs, rowNum) -> new CompetitionDetailResponseDto(
-                    rs.getLong("competition_id"),
-                    rs.getString("title"),
-                    rs.getString("description"),
-                    rs.getString("status"),
-                    toLocalDateTime(rs.getTimestamp("start_at")),
-                    toLocalDateTime(rs.getTimestamp("end_at")),
-                    rs.getBigDecimal("initial_seed_money"),
-                    rs.getObject("max_participants") != null ? rs.getInt("max_participants") : null,
-                    rs.getInt("participant_count")
-            )
-    );
+        List<CompetitionDetailResponseDto> result = jdbcTemplate.query(
+                sql,
+                new Object[]{competitionId},
+                (rs, rowNum) -> new CompetitionDetailResponseDto(
+                        rs.getLong("competition_id"),
+                        rs.getString("title"),
+                        rs.getString("description"),
+                        rs.getString("status"),
+                        toLocalDateTime(rs.getTimestamp("start_at")),
+                        toLocalDateTime(rs.getTimestamp("end_at")),
+                        rs.getBigDecimal("initial_seed_money"),
+                        rs.getObject("max_participants") != null ? rs.getInt("max_participants") : null,
+                        rs.getInt("participant_count")
+                )
+        );
 
-    return result.stream()
-            .findFirst()
-            .orElseThrow(() -> new RuntimeException("존재하지 않는 대회입니다."));
-}
+        return result.stream()
+                .findFirst()
+                .orElseThrow(() -> new RuntimeException("존재하지 않는 대회입니다."));
+    }
 
     @Transactional
     public void joinCompetition(Long competitionId, Long userId) {
@@ -128,19 +127,32 @@ public class CompetitionService {
         }
 
         String competitionSql = """
-                SELECT title, initial_seed_money, status
+                SELECT title,
+                       initial_seed_money,
+                       CASE
+                           WHEN SYSTIMESTAMP < start_at THEN 'SCHEDULED'
+                           WHEN SYSTIMESTAMP > end_at THEN 'ENDED'
+                           ELSE 'ONGOING'
+                       END AS status
                 FROM competitions
                 WHERE competition_id = ?
                 """;
 
-        Map<String, Object> competition = jdbcTemplate.queryForMap(
-                competitionSql,
-                competitionId
-        );
+        List<Map<String, Object>> competitions = jdbcTemplate.queryForList(competitionSql, competitionId);
+
+        if (competitions.isEmpty()) {
+            throw new RuntimeException("존재하지 않는 대회입니다.");
+        }
+
+        Map<String, Object> competition = competitions.get(0);
 
         String title = (String) competition.get("TITLE");
         BigDecimal initialSeedMoney = (BigDecimal) competition.get("INITIAL_SEED_MONEY");
         String status = (String) competition.get("STATUS");
+
+        if ("SCHEDULED".equalsIgnoreCase(status)) {
+            throw new RuntimeException("아직 시작되지 않은 대회에는 참가할 수 없습니다.");
+        }
 
         if ("ENDED".equalsIgnoreCase(status)) {
             throw new RuntimeException("종료된 대회에는 참가할 수 없습니다.");
@@ -420,95 +432,97 @@ public class CompetitionService {
     private LocalDateTime toLocalDateTime(Timestamp timestamp) {
         return timestamp != null ? timestamp.toLocalDateTime() : null;
     }
+
     public List<CompetitionParticipantDto> getParticipants(Long competitionId) {
-
-    String sql = """
-        SELECT u.user_id,
-               u.email,
-               u.nickname,
-               cp.account_id,
-               cp.joined_at,
-               cp.participation_status
-        FROM competition_participants cp
-        JOIN users u ON cp.user_id = u.user_id
-        WHERE cp.competition_id = ?
-        ORDER BY cp.joined_at DESC
-        """;
-
-    return jdbcTemplate.query(
-            sql,
-            new Object[]{competitionId},
-            (rs, rowNum) -> new CompetitionParticipantDto(
-                    rs.getLong("user_id"),
-                    rs.getString("email"),
-                    rs.getString("nickname"),
-                    rs.getLong("account_id"),
-                    toLocalDateTime(rs.getTimestamp("joined_at")),
-                    rs.getString("participation_status")
-            )
-    );
-}
-public List<CompetitionRankingResponseDto> getCompetitionRanking(Long competitionId) {
-
-    String statusSql = """
-            SELECT CASE
-                       WHEN SYSTIMESTAMP < start_at THEN 'SCHEDULED'
-                       WHEN SYSTIMESTAMP > end_at THEN 'ENDED'
-                       ELSE 'ONGOING'
-                   END AS status
-            FROM competitions
-            WHERE competition_id = ?
+        String sql = """
+            SELECT u.user_id,
+                   u.email,
+                   u.nickname,
+                   cp.account_id,
+                   cp.joined_at,
+                   cp.participation_status
+            FROM competition_participants cp
+            JOIN users u ON cp.user_id = u.user_id
+            WHERE cp.competition_id = ?
+            ORDER BY cp.joined_at DESC
             """;
 
-    String status = jdbcTemplate.queryForObject(
-            statusSql,
-            String.class,
-            competitionId
-    );
-
-    if (status == null) {
-        throw new RuntimeException("존재하지 않는 대회입니다.");
+        return jdbcTemplate.query(
+                sql,
+                new Object[]{competitionId},
+                (rs, rowNum) -> new CompetitionParticipantDto(
+                        rs.getLong("user_id"),
+                        rs.getString("email"),
+                        rs.getString("nickname"),
+                        rs.getLong("account_id"),
+                        toLocalDateTime(rs.getTimestamp("joined_at")),
+                        rs.getString("participation_status")
+                )
+        );
     }
 
-    if ("SCHEDULED".equalsIgnoreCase(status)) {
-        throw new RuntimeException("아직 시작되지 않은 대회입니다.");
+    public List<CompetitionRankingResponseDto> getCompetitionRanking(Long competitionId) {
+        String statusSql = """
+                SELECT CASE
+                           WHEN SYSTIMESTAMP < start_at THEN 'SCHEDULED'
+                           WHEN SYSTIMESTAMP > end_at THEN 'ENDED'
+                           ELSE 'ONGOING'
+                       END AS status
+                FROM competitions
+                WHERE competition_id = ?
+                """;
+
+        List<String> statuses = jdbcTemplate.query(
+                statusSql,
+                new Object[]{competitionId},
+                (rs, rowNum) -> rs.getString("status")
+        );
+
+        if (statuses.isEmpty()) {
+            throw new RuntimeException("존재하지 않는 대회입니다.");
+        }
+
+        String status = statuses.get(0);
+
+        if ("SCHEDULED".equalsIgnoreCase(status)) {
+            throw new RuntimeException("예정된 대회는 랭킹을 조회할 수 없습니다.");
+        }
+
+        String sql = """
+        SELECT
+            u.user_id,
+            u.nickname,
+            u.profile_image_url,
+            SUM(a.cash_balance) AS total_asset,
+            c.initial_seed_money,
+            CASE
+                WHEN c.initial_seed_money = 0 THEN 0
+                ELSE ROUND(
+                    (SUM(a.cash_balance) - c.initial_seed_money)
+                    / c.initial_seed_money * 100,
+                    2
+                )
+            END AS return_rate,
+            (SUM(a.cash_balance) - c.initial_seed_money) AS profit_amount
+        FROM competition_participants cp
+        JOIN users u ON cp.user_id = u.user_id
+        JOIN accounts a ON cp.account_id = a.account_id
+        JOIN competitions c ON cp.competition_id = c.competition_id
+        WHERE cp.competition_id = ?
+        GROUP BY u.user_id, u.nickname, u.profile_image_url, c.initial_seed_money
+        ORDER BY return_rate DESC
+        """;
+
+        return jdbcTemplate.query(
+                sql,
+                new Object[]{competitionId},
+                (rs, rowNum) -> new CompetitionRankingResponseDto(
+                        rs.getLong("user_id"),
+                        rs.getString("nickname"),
+                        rs.getString("profile_image_url"),
+                        rs.getBigDecimal("return_rate"),
+                        rs.getBigDecimal("profit_amount")
+                )
+        );
     }
-
-    String sql = """
-    SELECT
-        u.user_id,
-        u.nickname,
-        u.profile_image_url,
-        SUM(a.cash_balance) AS total_asset,
-        c.initial_seed_money,
-        CASE
-            WHEN c.initial_seed_money = 0 THEN 0
-            ELSE ROUND(
-                (SUM(a.cash_balance) - c.initial_seed_money)
-                / c.initial_seed_money * 100,
-                2
-            )
-        END AS return_rate,
-        (SUM(a.cash_balance) - c.initial_seed_money) AS profit_amount
-    FROM competition_participants cp
-    JOIN users u ON cp.user_id = u.user_id
-    JOIN accounts a ON cp.account_id = a.account_id
-    JOIN competitions c ON cp.competition_id = c.competition_id
-    WHERE cp.competition_id = ?
-    GROUP BY u.user_id, u.nickname, u.profile_image_url, c.initial_seed_money
-    ORDER BY return_rate DESC
-    """;
-
-    return jdbcTemplate.query(
-            sql,
-            new Object[]{competitionId},
-            (rs, rowNum) -> new CompetitionRankingResponseDto(
-                    rs.getLong("user_id"),
-                    rs.getString("nickname"),
-                    rs.getString("profile_image_url"),
-                    rs.getBigDecimal("return_rate"),
-                    rs.getBigDecimal("profit_amount")
-            )
-    );
-}
 }
