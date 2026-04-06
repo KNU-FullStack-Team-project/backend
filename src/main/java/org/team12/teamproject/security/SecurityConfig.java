@@ -36,6 +36,8 @@ public class SecurityConfig {
                     "/users/check-email", 
                     "/users/profile-image", // 회원가입 시 이미지 업로드를 위해 허용
                     "/api/stocks/**", 
+                    "/email/**",
+                    "/users/reset-password",
                     "/api/competitions/**"
                 ).permitAll() // 공개 API
                 .requestMatchers("/api/admin/**").hasRole("ADMIN") // 관리자 전용
