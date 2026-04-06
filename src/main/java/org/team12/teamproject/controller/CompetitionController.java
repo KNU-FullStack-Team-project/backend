@@ -6,6 +6,7 @@ import org.springframework.web.bind.annotation.*;
 import org.team12.teamproject.dto.CompetitionDetailResponseDto;
 import org.team12.teamproject.dto.CompetitionListResponseDto;
 import org.team12.teamproject.dto.CompetitionParticipantDto;
+import org.team12.teamproject.dto.CompetitionRankingResponseDto;
 import org.team12.teamproject.service.CompetitionService;
 
 import java.util.List;
@@ -23,7 +24,9 @@ public class CompetitionController {
     }
 
     @GetMapping("/{competitionId}")
-    public ResponseEntity<CompetitionDetailResponseDto> getCompetitionDetail(@PathVariable Long competitionId) {
+    public ResponseEntity<CompetitionDetailResponseDto> getCompetitionDetail(
+            @PathVariable Long competitionId
+    ) {
         return ResponseEntity.ok(competitionService.getCompetitionDetail(competitionId));
     }
 
@@ -44,11 +47,24 @@ public class CompetitionController {
     public ResponseEntity<List<Long>> getMyCompetitions(@RequestParam Long userId) {
         return ResponseEntity.ok(competitionService.getMyCompetitionIds(userId));
     }
-    
+
     @GetMapping("/{competitionId}/participants")
-public ResponseEntity<List<CompetitionParticipantDto>> getParticipants(
-        @PathVariable Long competitionId
-) {
-    return ResponseEntity.ok(competitionService.getParticipants(competitionId));
-}
+    public ResponseEntity<List<CompetitionParticipantDto>> getParticipants(
+            @PathVariable Long competitionId
+    ) {
+        return ResponseEntity.ok(competitionService.getParticipants(competitionId));
+    }
+
+    @GetMapping("/{competitionId}/ranking")
+    public ResponseEntity<?> getCompetitionRanking(
+            @PathVariable Long competitionId
+    ) {
+        try {
+            List<CompetitionRankingResponseDto> ranking =
+                    competitionService.getCompetitionRanking(competitionId);
+            return ResponseEntity.ok(ranking);
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
 }

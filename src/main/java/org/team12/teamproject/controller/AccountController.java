@@ -4,7 +4,10 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.team12.teamproject.dto.AccountDashboardDto;
+import org.team12.teamproject.dto.MyAccountBalanceDto;
 import org.team12.teamproject.service.AccountService;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/accounts")
@@ -19,5 +22,15 @@ public class AccountController {
         Long accountId = accountService.getAccountIdByEmail(email);
         AccountDashboardDto dto = accountService.getDashboard(accountId);
         return ResponseEntity.ok(dto);
+    }
+
+    @GetMapping("/my")
+    public ResponseEntity<List<MyAccountBalanceDto>> getMyAccounts(@RequestParam String email) {
+        return ResponseEntity.ok(accountService.getMyAccountBalancesByEmail(email));
+    }
+
+    @PostMapping("/{accountId}/reset-cash")
+    public ResponseEntity<MyAccountBalanceDto> resetCashBalance(@PathVariable Long accountId) {
+        return ResponseEntity.ok(accountService.resetMainAccountBalance(accountId));
     }
 }

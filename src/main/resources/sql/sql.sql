@@ -293,3 +293,19 @@ CREATE TABLE comments (
 	deleted_at	DATE		NULL
 );
 
+-- ==========================================
+-- 관심종목 (Favorite Stocks) 관련 스키마 (추가)
+-- ==========================================
+
+-- 1. 관심종목 테이블 생성
+CREATE TABLE favorite_stocks (
+    id NUMBER PRIMARY KEY,
+    user_id NUMBER NOT NULL,
+    stock_symbol VARCHAR2(20) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_fav_user FOREIGN KEY (user_id) REFERENCES users(user_id),
+    CONSTRAINT uk_fav_user_stock UNIQUE (user_id, stock_symbol)
+);
+
+-- 2. 시퀀스 생성 (엔티티의 @SequenceGenerator와 일치)
+CREATE SEQUENCE favorite_stock_seq START WITH 1 INCREMENT BY 1;

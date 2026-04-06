@@ -37,3 +37,6 @@ secrets.properties
 
 ### Runtime Logs ###
 *.log
+
+### Uploaded Files ###
+# profile/

@@ -3,7 +3,9 @@ package org.team12.teamproject.service;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.team12.teamproject.dto.AccountDashboardDto;
+import org.team12.teamproject.dto.MyAccountBalanceDto;
 import org.team12.teamproject.entity.Account;
 import org.team12.teamproject.entity.Holding;
 import org.team12.teamproject.repository.AccountRepository;
@@ -27,8 +29,11 @@ public class AccountService {
     private final AccountRepository accountRepository;
     private final HoldingRepository holdingRepository;
     private final StockService stockService;
+    private final FavoriteStockService favoriteStockService;
 
     private final UserRepository userRepository;
+
+    private static final NumberFormat CURRENCY_FORMAT = NumberFormat.getCurrencyInstance(Locale.KOREA);
 
     public Long getAccountIdByEmail(String email) {
         if (email == null) throw new IllegalArgumentException("Email is required");
@@ -56,6 +61,25 @@ public class AccountService {
     public AccountDashboardDto getDashboard(Long accountId) {
         Account account = accountRepository.findById(accountId)
                 .orElseThrow(() -> new IllegalArgumentException("Account not found for id: " + accountId));
+
+        // 관심 종목 데이터 조회 추가
+        List<AccountDashboardDto.FavoriteStockDto> favoriteStockDtos = new ArrayList<>();
+        Long userId = account.getUser().getId();
+        List<String> favoriteSymbols = favoriteStockService.getFavoriteSymbols(userId);
+
+        for (String symbol : favoriteSymbols) {
+            try {
+                var detail = stockService.getStockDetail(symbol);
+                favoriteStockDtos.add(AccountDashboardDto.FavoriteStockDto.builder()
+                        .name(detail.getName())
+                        .currentPrice(detail.getCurrentPrice())
+                        .changeRate(detail.getChangeRate())
+                        .volume(detail.getVolume())
+                        .build());
+            } catch (Exception e) {
+                log.warn("관심 종목 정보 조회 실패 ({}): {}", symbol, e.getMessage());
+            }
+        }
 
         BigDecimal cashBalance = account.getCashBalance();
         BigDecimal totalStockValue = BigDecimal.ZERO;
@@ -93,9 +117,9 @@ public class AccountService {
             holdingDtos.add(AccountDashboardDto.HoldingItemDto.builder()
                     .stockName(h.getStock().getStockName())
                     .quantity(h.getQuantity())
-                    .averageBuyPrice(currencyFormat.format(h.getAverageBuyPrice()))
-                    .currentPrice(currencyFormat.format(currentPrice))
-                    .holdingValue(currencyFormat.format(holdingValue))
+                    .averageBuyPrice(CURRENCY_FORMAT.format(h.getAverageBuyPrice()))
+                    .currentPrice(CURRENCY_FORMAT.format(currentPrice))
+                    .holdingValue(CURRENCY_FORMAT.format(holdingValue))
                     .build());
         }
 
@@ -109,12 +133,51 @@ public class AccountService {
 
         return AccountDashboardDto.builder()
                 .accountId(accountId)
-                .totalAsset(currencyFormat.format(totalAsset))
-                .cashBalance(currencyFormat.format(cashBalance))
+                .totalAsset(CURRENCY_FORMAT.format(totalAsset))
+                .cashBalance(CURRENCY_FORMAT.format(cashBalance))
                 .rawCashBalance(cashBalance)
-                .totalProfitAmount((totalProfit.compareTo(BigDecimal.ZERO) >= 0 ? "+" : "") + currencyFormat.format(totalProfit))
+                .totalProfitAmount((totalProfit.compareTo(BigDecimal.ZERO) >= 0 ? "+" : "") + CURRENCY_FORMAT.format(totalProfit))
                 .totalReturnRate((returnRate.compareTo(BigDecimal.ZERO) >= 0 ? "+" : "") + String.format("%.2f", returnRate) + "%")
                 .holdings(holdingDtos)
+                .favoriteStocks(favoriteStockDtos)
+                .build();
+    }
+
+    public List<MyAccountBalanceDto> getMyAccountBalancesByEmail(String email) {
+        if (email == null) throw new IllegalArgumentException("Email is required");
+
+        String cleanEmail = email.trim();
+        User user = userRepository.findByEmail(cleanEmail)
+                .orElseThrow(() -> new IllegalArgumentException("User not found: " + cleanEmail));
+        List<Account> accounts = accountRepository.findByUserId(user.getId());
+
+        return accounts.stream()
+                .map(account -> MyAccountBalanceDto.builder()
+                        .accountId(account.getId())
+                        .accountName(account.getAccountName())
+                        .accountType(account.getAccountType())
+                        .cashBalance(CURRENCY_FORMAT.format(account.getCashBalance()))
+                        .build())
+                .toList();
+    }
+
+    @Transactional
+    public MyAccountBalanceDto resetMainAccountBalance(Long accountId) {
+        Account account = accountRepository.findById(accountId)
+                .orElseThrow(() -> new IllegalArgumentException("계좌를 찾을 수 없습니다."));
+
+        if (!"MAIN".equals(account.getAccountType())) {
+            throw new IllegalArgumentException("기본 계좌만 예수금을 리셋할 수 있습니다.");
+        }
+
+        account.resetCashBalance(new BigDecimal("5000000"));
+        Account savedAccount = accountRepository.save(account);
+
+        return MyAccountBalanceDto.builder()
+                .accountId(savedAccount.getId())
+                .accountName(savedAccount.getAccountName())
+                .accountType(savedAccount.getAccountType())
+                .cashBalance(CURRENCY_FORMAT.format(savedAccount.getCashBalance()))
                 .build();
     }
 }

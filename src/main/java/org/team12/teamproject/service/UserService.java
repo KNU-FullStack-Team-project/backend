@@ -1,20 +1,32 @@
 package org.team12.teamproject.service;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 import org.team12.teamproject.dto.ChangePasswordRequestDto;
 import org.team12.teamproject.dto.LoginRequestDto;
 import org.team12.teamproject.dto.LoginResponseDto;
 import org.team12.teamproject.dto.ResetPasswordRequestDto;
 import org.team12.teamproject.dto.SignupRequestDto;
+import org.team12.teamproject.dto.AdminUpdateUserRequestDto;
 import org.team12.teamproject.dto.UserProfileResponseDto;
+import org.team12.teamproject.dto.WithdrawUserRequestDto;
 import org.team12.teamproject.entity.Account;
 import org.team12.teamproject.entity.User;
+import org.team12.teamproject.security.JwtUtil;
 import org.team12.teamproject.repository.AccountRepository;
 import org.team12.teamproject.repository.UserRepository;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.IOException;
 import java.math.BigDecimal;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -26,7 +38,10 @@ public class UserService {
     private final AccountRepository accountRepository;
     private final EmailService emailService;
     private final PasswordEncoder passwordEncoder;
+    private final JdbcTemplate jdbcTemplate;
+    private final JwtUtil jwtUtil;
 
+    @Transactional
     public String signup(SignupRequestDto dto) {
         String email = dto.getEmail() != null ? dto.getEmail().trim() : "";
         if (email.isEmpty()) return "이메일을 입력해주세요.";
@@ -35,8 +50,38 @@ public class UserService {
             return "이메일 인증을 먼저 완료해주세요.";
         }
 
-        if (userRepository.countByEmail(email) > 0) {
+        User existingUser = userRepository.findByEmail(email).orElse(null);
+
+        if (isEmailInUseByActiveUser(email)) {
             return "이미 사용 중인 이메일입니다.";
+        }
+
+        if (existingUser != null && "QUIT".equalsIgnoreCase(existingUser.getStatus())) {
+            if (!dto.getNickname().equals(existingUser.getNickname())
+                    && userRepository.countByNickname(dto.getNickname()) > 0) {
+                return "이미 사용 중인 닉네임입니다.";
+            }
+
+            resetUserAssets(existingUser.getId());
+
+            existingUser.setPasswordHash(passwordEncoder.encode(dto.getPassword()));
+            existingUser.setNickname(dto.getNickname());
+            existingUser.setRole("USER");
+            existingUser.setStatus("ACTIVE");
+            existingUser.setMarketingConsent(dto.getMarketingConsent() != null && dto.getMarketingConsent());
+            existingUser.setEmailVerified(true);
+            existingUser.setWithdrawnAt(null);
+            existingUser.setSuspendedAt(null);
+            existingUser.setDeletedAt(null);
+            existingUser.setCreatedAt(LocalDateTime.now());
+            existingUser.setUpdatedAt(LocalDateTime.now());
+            userRepository.save(existingUser);
+
+            createDefaultAccount(existingUser);
+
+            emailService.clearVerification(dto.getEmail());
+
+            return "회원가입 완료";
         }
 
         if (userRepository.countByNickname(dto.getNickname()) > 0) {
@@ -81,6 +126,19 @@ public class UserService {
         accountRepository.save(account);
     }
 
+    private void resetUserAssets(Long userId) {
+        jdbcTemplate.update("DELETE FROM competition_participants WHERE user_id = ?", userId);
+        jdbcTemplate.update(
+                "DELETE FROM orders WHERE account_id IN (SELECT account_id FROM accounts WHERE user_id = ?)",
+                userId
+        );
+        jdbcTemplate.update(
+                "DELETE FROM holdings WHERE account_id IN (SELECT account_id FROM accounts WHERE user_id = ?)",
+                userId
+        );
+        jdbcTemplate.update("DELETE FROM accounts WHERE user_id = ?", userId);
+    }
+
     public LoginResponseDto login(LoginRequestDto dto) {
         String email = dto.getEmail() != null ? dto.getEmail().trim() : "";
         User user = userRepository.findByEmail(email)
@@ -88,6 +146,14 @@ public class UserService {
 
         if (!matchesPassword(dto.getPassword(), user.getPasswordHash())) {
             throw new RuntimeException("회원정보가 일치하지 않습니다.");
+        }
+
+        if ("QUIT".equalsIgnoreCase(user.getStatus())) {
+            throw new RuntimeException("회원정보가 일치하지 않습니다.");
+        }
+
+        if ("SUSPENDED".equalsIgnoreCase(user.getStatus())) {
+            throw new RuntimeException("정지된 계정입니다.");
         }
 
         if (!"ACTIVE".equalsIgnoreCase(user.getStatus())) {
@@ -98,12 +164,21 @@ public class UserService {
         user.setUpdatedAt(LocalDateTime.now());
         userRepository.save(user);
 
+        // 실제 JWT 생성
+        String token = jwtUtil.generateToken(user.getEmail(), user.getRole());
+
+        // 사용자의 기본 계좌 ID 조회 (마이페이지 등에서 즉시 사용 위함)
+        List<Account> accounts = accountRepository.findByUserId(user.getId());
+        Long accountId = accounts.isEmpty() ? null : accounts.get(0).getId();
+
         return new LoginResponseDto(
                 user.getId(),
                 user.getEmail(),
                 user.getNickname(),
                 user.getRole(),
-                "로그인 성공");
+                "로그인 성공",
+                token,
+                accountId);
     }
 
     public String checkEmail(String email) {
@@ -112,7 +187,7 @@ public class UserService {
         }
 
         String cleanEmail = email.trim();
-        if (userRepository.countByEmail(cleanEmail) > 0) {
+        if (isEmailInUseByActiveUser(cleanEmail)) {
             return "이미 사용 중인 이메일입니다.";
         }
 
@@ -125,6 +200,48 @@ public class UserService {
                 .orElseThrow(() -> new RuntimeException("회원정보가 일치하지 않습니다."));
 
         return toUserProfile(user);
+    }
+
+    public UserProfileResponseDto updateProfileImage(String email, MultipartFile image) {
+        String cleanEmail = email != null ? email.trim() : "";
+        if (cleanEmail.isEmpty()) {
+            throw new RuntimeException("회원 정보를 찾을 수 없습니다.");
+        }
+
+        if (image == null || image.isEmpty()) {
+            throw new RuntimeException("프로필 사진을 선택해 주세요.");
+        }
+
+        String contentType = image.getContentType();
+        if (!"image/png".equalsIgnoreCase(contentType)
+                && !"image/jpeg".equalsIgnoreCase(contentType)
+                && !"image/jpg".equalsIgnoreCase(contentType)) {
+            throw new RuntimeException("PNG, JPG, JPEG 파일만 업로드할 수 있습니다.");
+        }
+
+        User user = userRepository.findByEmail(cleanEmail)
+                .orElseThrow(() -> new RuntimeException("회원 정보를 찾을 수 없습니다."));
+
+        try {
+            Path profileDirectory = getProfileDirectory();
+            Files.createDirectories(profileDirectory);
+
+            BufferedImage profileImage = ImageIO.read(image.getInputStream());
+            if (profileImage == null) {
+                throw new RuntimeException("이미지 파일을 읽을 수 없습니다.");
+            }
+
+            Path profileImagePath = profileDirectory.resolve(user.getId() + ".png");
+            ImageIO.write(profileImage, "png", profileImagePath.toFile());
+
+            user.setProfileImageUrl("/profile/" + user.getId() + ".png");
+            user.setUpdatedAt(LocalDateTime.now());
+            userRepository.save(user);
+
+            return toUserProfile(user);
+        } catch (IOException e) {
+            throw new RuntimeException("프로필 사진 저장에 실패했습니다.");
+        }
     }
 
     public String changePassword(ChangePasswordRequestDto dto) {
@@ -205,6 +322,48 @@ public class UserService {
                 .toList();
     }
 
+    public UserProfileResponseDto updateAdminUser(Long userId, AdminUpdateUserRequestDto dto) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다."));
+
+        if (!"USER".equals(dto.getRole()) && !"ADMIN".equals(dto.getRole())) {
+            throw new RuntimeException("권한 값이 올바르지 않습니다.");
+        }
+
+        if (!"ACTIVE".equals(dto.getStatus()) && !"SUSPENDED".equals(dto.getStatus())) {
+            throw new RuntimeException("상태 값이 올바르지 않습니다.");
+        }
+
+        user.setRole(dto.getRole());
+        user.setStatus(dto.getStatus());
+        user.setSuspendedAt("SUSPENDED".equals(dto.getStatus()) ? LocalDateTime.now() : null);
+        user.setUpdatedAt(LocalDateTime.now());
+
+        return toUserProfile(userRepository.save(user));
+    }
+
+    public String withdraw(WithdrawUserRequestDto dto) {
+        String email = dto.getEmail() != null ? dto.getEmail().trim() : "";
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("회원정보가 일치하지 않습니다."));
+
+        deleteProfileImage(user.getId());
+
+        user.setProfileImageUrl(null);
+        user.setStatus("QUIT");
+        user.setWithdrawnAt(LocalDateTime.now());
+        user.setUpdatedAt(LocalDateTime.now());
+        userRepository.save(user);
+
+        return "회원 탈퇴가 완료되었습니다.";
+    }
+
+    private boolean isEmailInUseByActiveUser(String email) {
+        return userRepository.findByEmail(email)
+                .map(user -> !"QUIT".equalsIgnoreCase(user.getStatus()))
+                .orElse(false);
+    }
+
     private boolean matchesPassword(String rawPassword, String storedPassword) {
         if (rawPassword == null || storedPassword == null) {
             return false;
@@ -240,6 +399,7 @@ public class UserService {
                 .id(user.getId())
                 .email(user.getEmail())
                 .nickname(user.getNickname())
+                .profileImageUrl(user.getProfileImageUrl())
                 .role(user.getRole())
                 .status(user.getStatus())
                 .createdAt(user.getCreatedAt() != null ? user.getCreatedAt().toString() : null)
@@ -247,4 +407,26 @@ public class UserService {
                 .accountCount(accounts.size())
                 .build();
     }
+
+    private Path getProfileDirectory() {
+        Path backendProfileDirectory = Paths.get("backend", "profile");
+        if (Files.exists(Paths.get("backend")) || Files.exists(backendProfileDirectory)) {
+            return backendProfileDirectory;
+        }
+
+        return Paths.get("profile");
+    }
+
+    private void deleteProfileImage(Long userId) {
+        if (userId == null) {
+            return;
+        }
+
+        try {
+            Files.deleteIfExists(getProfileDirectory().resolve(userId + ".png"));
+        } catch (IOException e) {
+            throw new RuntimeException("프로필 사진 삭제에 실패했습니다.");
+        }
+    }
+
 }

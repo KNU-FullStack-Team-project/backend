@@ -19,6 +19,7 @@ public class AccountDashboardDto {
     private String totalReturnRate;
 
     private List<HoldingItemDto> holdings;
+    private List<FavoriteStockDto> favoriteStocks;
 
     @Getter
     @Setter
@@ -29,5 +30,15 @@ public class AccountDashboardDto {
         private String averageBuyPrice;
         private String currentPrice;
         private String holdingValue;
+    }
+
+    @Getter
+    @Setter
+    @Builder
+    public static class FavoriteStockDto {
+        private String name;
+        private String currentPrice;
+        private String changeRate;
+        private String volume;
     }
 }
