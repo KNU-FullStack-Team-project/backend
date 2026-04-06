@@ -2,7 +2,7 @@ package org.team12.teamproject.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.team12.teamproject.entity.Account;
@@ -30,7 +30,7 @@ public class OrderService {
     private final StockRepository stockRepository;
     private final HoldingRepository holdingRepository;
     private final StockService stockService;
-    private final RedisTemplate<String, String> redisTemplate;
+    private final StringRedisTemplate redisTemplate;
 
     private static final String ORDER_QUEUE_KEY = "orders:queue";
 
