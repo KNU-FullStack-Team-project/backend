@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 import org.team12.teamproject.dto.ChangePasswordRequestDto;
 import org.team12.teamproject.dto.LoginRequestDto;
 import org.team12.teamproject.dto.LoginResponseDto;
+import org.team12.teamproject.dto.ResetPasswordRequestDto;
 import org.team12.teamproject.dto.SignupRequestDto;
 import org.team12.teamproject.dto.UserProfileResponseDto;
 import org.team12.teamproject.entity.Account;
@@ -160,6 +161,42 @@ public class UserService {
         userRepository.save(user);
 
         return "비밀번호가 변경되었습니다.";
+    }
+
+    public String resetPassword(ResetPasswordRequestDto dto) {
+        String email = dto.getEmail() != null ? dto.getEmail().trim() : "";
+        String newPassword = dto.getNewPassword();
+
+        if (email.isEmpty()) {
+            return "이메일을 입력해주세요.";
+        }
+
+        if (newPassword == null || newPassword.isBlank()) {
+            return "새 비밀번호를 입력해주세요.";
+        }
+
+        if (!emailService.isVerified(email)) {
+            return "이메일 인증을 먼저 완료해주세요.";
+        }
+
+        if (!isValidPassword(newPassword)) {
+            return "새 비밀번호는 8자 이상, 영문/숫자/특수문자를 포함해야 합니다.";
+        }
+
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("가입된 회원정보가 없습니다."));
+
+        if (matchesPassword(newPassword, user.getPasswordHash())) {
+            return "이전 비밀번호와 동일한 비밀번호는 사용할 수 없습니다.";
+        }
+
+        user.setPasswordHash(passwordEncoder.encode(newPassword));
+        user.setUpdatedAt(LocalDateTime.now());
+        userRepository.save(user);
+
+        emailService.clearVerification(email);
+
+        return "비밀번호가 재설정되었습니다.";
     }
 
     public List<UserProfileResponseDto> getUserList() {

@@ -24,7 +24,8 @@ public class SecurityConfig {
                                 "/email/**",
                                 "/users/signup",
                                 "/users/login",
-                                "/users/check-email"
+                                "/users/check-email",
+                                "/users/reset-password"
                         ).permitAll()
                         .anyRequest().permitAll()
                 )

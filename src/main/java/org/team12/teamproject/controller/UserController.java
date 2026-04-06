@@ -9,6 +9,7 @@ import org.team12.teamproject.dto.LoginResponseDto;
 import org.team12.teamproject.dto.SignupRequestDto;
 import org.team12.teamproject.dto.UserProfileResponseDto;
 import org.team12.teamproject.service.UserService;
+import org.team12.teamproject.dto.ResetPasswordRequestDto;
 
 import java.util.Map;
 
@@ -44,5 +45,9 @@ public class UserController {
     @PostMapping("/change-password")
     public ResponseEntity<String> changePassword(@RequestBody ChangePasswordRequestDto dto) {
         return ResponseEntity.ok(userService.changePassword(dto));
+    }
+    @PostMapping("/reset-password")
+    public String resetPassword(@RequestBody ResetPasswordRequestDto dto) {
+        return userService.resetPassword(dto);
     }
 }
