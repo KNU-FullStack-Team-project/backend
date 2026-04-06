@@ -326,16 +326,22 @@ public class StockService {
     }
 
     /**
-     * 1분마다 전 종목 시세를 Redis에 동기화
+     * 전 종목 시세를 Redis에 동기화 (KIS Sandbox 초당 2건 제한 준수를 위해 700ms 딜레이)
+     * fixedDelay를 사용하여 이전 작업이 끝난 후 5분 뒤에 다음 작업이 시작되도록 중첩을 방지합니다.
      */
-    @Scheduled(fixedRate = 60000)
+    @Scheduled(fixedDelay = 300000)
     public void updateAllStockPricesToRedis() {
-        log.info(">>> [Scheduled] 전 종목 시세 Redis 동기화 시작...");
+        log.info(">>> [Scheduled] 전 종목 시세 Redis 동기화 시작 (700ms 간격)...");
         List<Stock> allStocks = stockRepository.findAll();
 
         for (Stock stock : allStocks) {
             try {
                 String symbol = stock.getStockCode();
+                
+                // KIS Sandbox는 초당 2건의 속도 제한이 있으므로 100ms는 너무 빠릅니다.
+                // 700ms 정도 딜레이를 주어야 다른 실시간 요청과 충돌하지 않고 안정적으로 동작합니다.
+                Thread.sleep(700);
+
                 StockResponseDto latest = fetchPriceFromKisApi(symbol);
 
                 if (latest != null) {
@@ -347,8 +353,6 @@ public class StockService {
 
                     redisTemplate.opsForValue().set(cacheKey, value, Duration.ofMinutes(10));
                 }
-
-                Thread.sleep(100);
             } catch (Exception e) {
                 log.warn("주식({}) 시세 동기화 중 오류: {}", stock.getStockCode(), e.getMessage());
             }

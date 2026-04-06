@@ -20,6 +20,15 @@ public class FavoriteStockController {
         return ResponseEntity.ok(favoriteStockService.getFavoriteSymbols(userId));
     }
 
+    @GetMapping("/details")
+    public ResponseEntity<?> getFavoriteDetails(@RequestParam(name = "userId") Long userId) {
+        try {
+            return ResponseEntity.ok(favoriteStockService.getFavoriteDetails(userId));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body("Error: " + e.getMessage());
+        }
+    }
+
     @PostMapping("/{symbol}")
     public ResponseEntity<?> addFavorite(
             @RequestParam(name = "userId") Long userId,
