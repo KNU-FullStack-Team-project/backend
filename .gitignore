@@ -39,4 +39,4 @@ secrets.properties
 *.log
 
 ### Uploaded Files ###
-# profile/
+profile/

@@ -35,6 +35,7 @@ public class SecurityConfig {
                     "/users/signup", 
                     "/users/check-email", 
                     "/users/profile-image", // 회원가입 시 이미지 업로드를 위해 허용
+                    "/profile/**",
                     "/api/stocks/**", 
                     "/email/**",
                     "/users/reset-password",
