@@ -6,7 +6,6 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.team12.teamproject.dto.*;
 import org.team12.teamproject.service.UserService;
-import org.team12.teamproject.dto.ResetPasswordRequestDto;
 
 @RestController
 @RequestMapping("/users")
@@ -50,10 +49,9 @@ public class UserController {
     }
 
     @PostMapping("/reset-password")
-    public String resetPassword(@RequestBody ResetPasswordRequestDto dto) {
-        return userService.resetPassword(dto);
+    public ResponseEntity<String> resetPassword(@RequestBody ResetPasswordRequestDto dto) {
+        return ResponseEntity.ok(userService.resetPassword(dto));
     }
-}
 
     @PostMapping("/withdraw")
     public ResponseEntity<String> withdraw(@RequestBody WithdrawUserRequestDto dto) {
