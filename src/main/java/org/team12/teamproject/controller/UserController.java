@@ -48,6 +48,11 @@ public class UserController {
         return ResponseEntity.ok(userService.changePassword(dto));
     }
 
+    @PostMapping("/reset-password")
+    public ResponseEntity<String> resetPassword(@RequestBody ResetPasswordRequestDto dto) {
+        return ResponseEntity.ok(userService.resetPassword(dto));
+    }
+
     @PostMapping("/withdraw")
     public ResponseEntity<String> withdraw(@RequestBody WithdrawUserRequestDto dto) {
         return ResponseEntity.ok(userService.withdraw(dto));
