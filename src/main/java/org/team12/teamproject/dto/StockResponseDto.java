@@ -12,4 +12,5 @@ public class StockResponseDto {
     private String changeAmount;  // 전일대비
     private String changeRate;    // 전일대비율
     private String volume;        // 누적거래량
+    private String basePrice;     // 기준가 (전일 종가)
 }

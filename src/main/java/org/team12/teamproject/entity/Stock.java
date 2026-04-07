@@ -44,6 +44,12 @@ public class Stock implements Serializable {
         this.createdAt = createdAt;
     }
 
+    public void updateName(String newName) {
+        if (newName != null && !newName.trim().isEmpty()) {
+            this.stockName = newName.trim();
+        }
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;

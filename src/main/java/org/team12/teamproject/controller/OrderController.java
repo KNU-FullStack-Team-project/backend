@@ -7,6 +7,7 @@ import org.team12.teamproject.dto.OrderRequestDto;
 import org.team12.teamproject.entity.Order;
 import org.team12.teamproject.service.OrderService;
 
+
 @RestController
 @RequestMapping("/api/orders")
 @RequiredArgsConstructor
@@ -27,8 +28,13 @@ public class OrderController {
                             req.getPrice());
                 }
             } else {
-                // SELL인 경우 (현재 MARKET SELL만 구현됨)
-                order = orderService.placeMarketSellOrder(req.getAccountId(), req.getStockCode(), req.getQuantity());
+                // SELL인 경우
+                if ("MARKET".equalsIgnoreCase(req.getOrderType())) {
+                    order = orderService.placeMarketSellOrder(req.getAccountId(), req.getStockCode(), req.getQuantity());
+                } else {
+                    order = orderService.placeLimitSellOrder(req.getAccountId(), req.getStockCode(), req.getQuantity(),
+                            req.getPrice());
+                }
             }
             return ResponseEntity.ok().body("Order placed successfully. Status: " + order.getOrderStatus());
         } catch (Exception e) {

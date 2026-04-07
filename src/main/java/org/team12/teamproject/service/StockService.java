@@ -6,7 +6,7 @@ import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.*;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -26,15 +26,28 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import org.springframework.context.ApplicationEventPublisher;
+import org.team12.teamproject.event.PriceUpdateEvent;
+import java.math.BigDecimal;
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class StockService {
-
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final ApplicationEventPublisher eventPublisher;
     private final StockRepository stockRepository;
-    private final RedisTemplate<String, String> redisTemplate;
+    private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    // API 호출 타임아웃 설정을 포함한 RestTemplate 생성 (429/504 오류 방지)
+    private final RestTemplate restTemplate = createRestTemplate();
+
+    private RestTemplate createRestTemplate() {
+        org.springframework.http.client.SimpleClientHttpRequestFactory factory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(5000); // 연결 대기 시간 5초
+        factory.setReadTimeout(10000);    // 데이터 읽기 대기 시간 10초
+        return new RestTemplate(factory);
+    }
 
     @Value("${kis.api.url}")
     private String apiUrl;
@@ -52,83 +65,8 @@ public class StockService {
      */
     @PostConstruct
     public void initDummyData() {
-        if (stockRepository.count() == 0) {
-            String[] codes = {
-                    "005930", "삼성전자", "KOSPI",
-                    "000660", "SK하이닉스", "KOSPI",
-                    "373220", "LG에너지솔루션", "KOSPI",
-                    "207940", "삼성바이오로직스", "KOSPI",
-                    "005380", "현대차", "KOSPI",
-                    "000270", "기아", "KOSPI",
-                    "068270", "셀트리온", "KOSPI",
-                    "005490", "POSCO홀딩스", "KOSPI",
-                    "035420", "NAVER", "KOSPI",
-                    "051910", "LG화학", "KOSPI",
-                    "028260", "삼성물산", "KOSPI",
-                    "035720", "카카오", "KOSPI",
-                    "006400", "삼성SDI", "KOSPI",
-                    "105560", "KB금융", "KOSPI",
-                    "055550", "신한지주", "KOSPI",
-                    "012330", "현대모비스", "KOSPI",
-                    "003670", "포스코퓨처엠", "KOSPI",
-                    "086790", "하나금융지주", "KOSPI",
-                    "323410", "카카오뱅크", "KOSPI",
-                    "259960", "크래프톤", "KOSPI",
-                    "377300", "카카오페이", "KOSPI",
-                    "011200", "HMM", "KOSPI",
-                    "015760", "한국전력", "KOSPI",
-                    "018260", "삼성SDS", "KOSPI",
-                    "003490", "대한항공", "KOSPI",
-                    "034020", "두산에너빌리티", "KOSPI",
-                    "010130", "고려아연", "KOSPI",
-                    "009150", "삼성전기", "KOSPI",
-                    "032830", "삼성생명", "KOSPI",
-                    "316140", "우리금융지주", "KOSPI",
-                    "010950", "S-Oil", "KOSPI",
-                    "000810", "삼성화재", "KOSPI",
-                    "033920", "무학", "KOSPI",
-                    "011170", "롯데케미칼", "KOSPI",
-                    "024110", "기업은행", "KOSPI",
-                    "051900", "LG생활건강", "KOSPI",
-                    "138040", "메리츠금융지주", "KOSPI",
-                    "036570", "엔씨소프트", "KOSPI",
-                    "090430", "아모레퍼시픽", "KOSPI",
-                    "010140", "삼성중공업", "KOSPI",
-                    "028050", "삼성엔지니어링", "KOSPI",
-                    "086280", "현대글로비스", "KOSPI",
-                    "021240", "코웨이", "KOSPI",
-                    "022100", "포스코DX", "KOSDAQ",
-                    "247540", "에코프로비엠", "KOSDAQ",
-                    "086520", "에코프로", "KOSDAQ",
-                    "066970", "엘앤에프", "KOSDAQ",
-                    "028300", "HLB", "KOSDAQ",
-                    "196170", "알테오젠", "KOSDAQ",
-                    "293490", "카카오게임즈", "KOSDAQ",
-                    "058470", "리노공업", "KOSDAQ",
-                    "278280", "천보", "KOSDAQ",
-                    "039030", "이오테크닉스", "KOSDAQ",
-                    "041510", "에스엠", "KOSDAQ",
-                    "035900", "JYP Ent.", "KOSDAQ",
-                    "122870", "와이지엔터테인먼트", "KOSDAQ",
-                    "036490", "SK머티리얼즈", "KOSDAQ",
-                    "214150", "클래시스", "KOSDAQ",
-                    "000250", "삼천당제약", "KOSDAQ",
-                    "034230", "파라다이스", "KOSDAQ"
-            };
-
-            for (int i = 0; i < codes.length; i += 3) {
-                stockRepository.save(
-                        Stock.builder()
-                                .stockCode(codes[i])
-                                .stockName(codes[i + 1])
-                                .marketType(codes[i + 2])
-                                .isActive(true)
-                                .createdAt(LocalDateTime.now())
-                                .build());
-            }
-
-            log.info("주식 더미 데이터 삽입 완료");
-        }
+        // KisMasterSyncService를 통해 전 종목을 동기화하므로 더 이상 더미 데이터를 사용하지 않습니다.
+        // log.info("더미 데이터 대신 전체 KIS 마스터 파일을 동기화합니다.");
     }
 
     /**
@@ -161,14 +99,19 @@ public class StockService {
 
                 if (cachedData != null) {
                     String[] parts = cachedData.split(":");
-                    if (parts.length >= 4) {
-                        content.add(builder
-                                .currentPrice(parts[0])
-                                .changeAmount(parts[1])
-                                .changeRate(parts[2])
-                                .volume(parts[3])
-                                .build());
+                    // 주석: 신규 포맷(5개: basePrice 포함) 필수 체크
+                    if (parts.length >= 5) {
+                        builder.currentPrice(parts[0])
+                               .changeAmount(parts[1])
+                               .changeRate(parts[2])
+                               .volume(parts[3])
+                               .basePrice(parts[4]);
+                        
+                        content.add(builder.build());
                         continue;
+                    } else {
+                        // 규격에 맞지 않는 레디스 데이터 삭제 (동기화 유도)
+                        redisTemplate.delete("stock:price:" + stock.getStockCode());
                     }
                 }
 
@@ -199,7 +142,7 @@ public class StockService {
             String cachedData = redisTemplate.opsForValue().get(cacheKey);
             if (cachedData != null) {
                 String[] parts = cachedData.split(":");
-                if (parts.length >= 4) {
+                if (parts.length >= 5) {
                     return StockResponseDto.builder()
                             .symbol(stockCode)
                             .name(stockRepository.findByStockCode(stockCode)
@@ -209,6 +152,7 @@ public class StockService {
                             .changeAmount(parts[1])
                             .changeRate(parts[2])
                             .volume(parts[3])
+                            .basePrice(parts[4])
                             .build();
                 } else {
                     log.warn("Redis 캐시 포맷 불일치: {}", cachedData);
@@ -230,15 +174,19 @@ public class StockService {
         }
 
         try {
-            String value = String.format("%s:%s:%s:%s",
+            String value = String.format("%s:%s:%s:%s:%s",
                     dto.getCurrentPrice(),
                     dto.getChangeAmount(),
                     dto.getChangeRate(),
-                    dto.getVolume());
+                    dto.getVolume(),
+                    dto.getBasePrice());
 
             redisTemplate.opsForValue().set(cacheKey, value, Duration.ofSeconds(60));
+            
+            // 가격 업데이트 이벤트 발행
+            eventPublisher.publishEvent(new PriceUpdateEvent(this, stockCode, new BigDecimal(dto.getCurrentPrice())));
         } catch (Exception e) {
-            log.warn("Redis 저장 실패: {}", e.getMessage());
+            log.warn("Redis 저장 또는 이벤트 발행 실패: {}", e.getMessage());
         }
 
         return dto;
@@ -249,7 +197,7 @@ public class StockService {
      * period: 1D(5분), 1W(일), 1M(일), 6M(월), 1Y(월)
      */
     public List<StockCandleDto> getStockHistory(String symbol, String period) {
-        String cacheKey = "stock:history:" + symbol + ":" + period;
+        String cacheKey = "stock:history:v3:" + symbol + ":" + period;
 
         try {
             String cachedData = redisTemplate.opsForValue().get(cacheKey);
@@ -277,14 +225,14 @@ public class StockService {
                 String startDate;
 
                 if ("1W".equals(period)) {
-                    startDate = now.minusDays(7).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                    startDate = now.minusDays(30).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else if ("1M".equals(period)) {
                     startDate = now.minusDays(31).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else if ("6M".equals(period)) {
                     periodCode = "M";
                     startDate = now.minusMonths(6).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else if ("1Y".equals(period)) {
-                    periodCode = "M";
+                    periodCode = "D"; // 연도 차트도 상세 조회를 위해 일봉(D)으로 변경
                     startDate = now.minusYears(1).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else {
                     startDate = now.minusDays(30).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
@@ -312,12 +260,12 @@ public class StockService {
                     List<Map<String, Object>> output2 = (List<Map<String, Object>>) body.get("output2");
                     if (output2 != null) {
                         resultData = output2.stream().map(data -> StockCandleDto.builder()
-                                .date((String) data.get("stck_bsop_date"))
-                                .open((String) data.get("stck_oprc"))
-                                .high((String) data.get("stck_hgpr"))
-                                .low((String) data.get("stck_lwpr"))
-                                .close((String) data.get("stck_clpr"))
-                                .volume((String) data.get("acml_vol"))
+                                .date(String.valueOf(data.get("stck_bsop_date")))
+                                .open(String.valueOf(data.get("stck_oprc")))
+                                .high(String.valueOf(data.get("stck_hgpr")))
+                                .low(String.valueOf(data.get("stck_lwpr")))
+                                .close(String.valueOf(data.get("stck_clpr")))
+                                .volume(String.valueOf(data.get("acml_vol")))
                                 .build())
                                 .collect(Collectors.toList());
                     }
@@ -341,58 +289,77 @@ public class StockService {
     }
 
     private List<StockCandleDto> fetchIntradayHistory(String symbol, String intervalCode) {
+        List<StockCandleDto> allData = new ArrayList<>();
+        String nextHour = ""; // 다음 조회를 위한 시작 시간
+
         try {
             ensureAccessToken();
 
-            String url = apiUrl + "/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
-                    + "?FID_COND_MRKT_DIV_CODE=J"
-                    + "&FID_INPUT_ISCD=" + symbol
-                    + "&FID_ETC_CLS_CODE="
-                    + "&FID_INPUT_HOUR_1="
-                    + "&FID_PW_DATA_INCU_YN=N";
+            // 최대 4회 호출하여 장 시작(09:00) 시점까지의 데이터를 충분히 확보 (최대 약 120개 포인트)
+            for (int i = 0; i < 4; i++) {
+                String url = apiUrl + "/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
+                        + "?FID_COND_MRKT_DIV_CODE=J"
+                        + "&FID_INPUT_ISCD=" + symbol
+                        + "&FID_ETC_CLS_CODE="
+                        + "&FID_INPUT_HOUR_1=" + nextHour
+                        + "&FID_PW_DATA_INCU_YN=N";
 
-            log.info("KIS 분봉 API 요청 URL: {}", url);
+                log.info("KIS 분봉 API 요청 ({}회차, symbol: {}): URL={}", i + 1, symbol, url);
 
-            HttpHeaders headers = new HttpHeaders();
-            headers.set("authorization", "Bearer " + cachedAccessToken);
-            headers.set("appkey", appKey);
-            headers.set("appsecret", appSecret);
-            headers.set("tr_id", "FHKST03010200");
+                HttpHeaders headers = new HttpHeaders();
+                headers.set("authorization", "Bearer " + cachedAccessToken);
+                headers.set("appkey", appKey);
+                headers.set("appsecret", appSecret);
+                headers.set("tr_id", "FHKST03010200");
 
-            HttpEntity<String> entity = new HttpEntity<>(headers);
-            ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
+                HttpEntity<String> entity = new HttpEntity<>(headers);
+                ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
 
-            Map<String, Object> body = response.getBody();
-            if (body != null) {
-                log.info("KIS 분봉 API 상세 응답 (symbol: {}): rt_cd={}, msg_cd={}, msg1={}",
-                        symbol, body.get("rt_cd"), body.get("msg_cd"), body.get("msg1"));
-                // 전체 바디를 알고 싶으면 아래 주석 해제 (로그가 너무 길어질 수 있음)
-                // log.info("전체 응답 바디: {}", objectMapper.writeValueAsString(body));
-            } else {
-                log.warn("KIS 분봉 API 응답 빈 본문 (symbol: {})", symbol);
-            }
+                Map<String, Object> body = response.getBody();
+                if (body != null && body.containsKey("output2")) {
+                    List<Map<String, Object>> output2 = (List<Map<String, Object>>) body.get("output2");
+                    if (output2 != null && !output2.isEmpty()) {
+                        List<StockCandleDto> batch = output2.stream().map(data -> StockCandleDto.builder()
+                                .date(String.valueOf(data.get("stck_bsop_date")))
+                                .time(String.valueOf(data.get("stck_cntg_hour")))
+                                .open(String.valueOf(data.get("stck_oprc")))
+                                .high(String.valueOf(data.get("stck_hgpr")))
+                                .low(String.valueOf(data.get("stck_lwpr")))
+                                .close(String.valueOf(data.get("stck_prpr")))
+                                .volume(String.valueOf(data.get("cntg_vol")))
+                                .build())
+                                .collect(Collectors.toList());
 
-            if (body != null && body.containsKey("output2")) {
-                List<Map<String, Object>> output2 = (List<Map<String, Object>>) body.get("output2");
-                if (output2 != null) {
-                    log.info("수신된 분봉 데이터 개수: {} (symbol: {})", output2.size(), symbol);
-                    return output2.stream().map(data -> StockCandleDto.builder()
-                            .date(String.valueOf(data.get("stck_bsop_date")))
-                            .time(String.valueOf(data.get("stck_cntg_hour")))
-                            .open(String.valueOf(data.get("stck_oprc")))
-                            .high(String.valueOf(data.get("stck_hgpr")))
-                            .low(String.valueOf(data.get("stck_lwpr")))
-                            .close(String.valueOf(data.get("stck_prpr")))
-                            .volume(String.valueOf(data.get("cntg_vol")))
-                            .build())
-                            .collect(Collectors.toList());
+                        allData.addAll(batch);
+
+                        // 마지막 데이터의 시간을 다음 조회의 시작 시간으로 설정
+                        String lastTime = String.valueOf(output2.get(output2.size() - 1).get("stck_cntg_hour"));
+                        
+                        // 장 시작 시간(09:00:00)에 도달했거나 데이터가 더 이상 없으면 중단
+                        if (lastTime.compareTo("090000") <= 0) {
+                            break;
+                        }
+                        
+                        // KIS API 특성상 마지막 데이터 시간을 넘겨주면 그 시간 이전 데이터를 가져옴
+                        nextHour = lastTime;
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
                 }
+                
+                // TPS 제한 방지를 위해 아주 짧은 대기 추가 가능 (현재는 생략)
             }
+            
+            // 수집된 전체 데이터 반환 (SortedData에서 reverse하므로 그대로 반환)
+            return allData;
+
         } catch (Exception e) {
-            log.error("분봉 데이터 조회 에러: {}", e.getMessage());
+            log.error("분봉 데이터 전수 조회 에러 (symbol: {}): {}", symbol, e.getMessage());
         }
 
-        return new ArrayList<>();
+        return allData;
     }
 
     // 하위 호환용
@@ -401,16 +368,22 @@ public class StockService {
     }
 
     /**
-     * 1분마다 전 종목 시세를 Redis에 동기화
+     * 전 종목 시세를 Redis에 동기화 (KIS Sandbox 초당 2건 제한 준수를 위해 700ms 딜레이)
+     * fixedDelay를 사용하여 이전 작업이 끝난 후 5분 뒤에 다음 작업이 시작되도록 중첩을 방지합니다.
      */
-    @Scheduled(fixedRate = 60000)
+    @Scheduled(fixedDelay = 300000)
     public void updateAllStockPricesToRedis() {
-        log.info(">>> [Scheduled] 전 종목 시세 Redis 동기화 시작...");
+        log.info(">>> [Scheduled] 전 종목 시세 Redis 동기화 시작 (700ms 간격)...");
         List<Stock> allStocks = stockRepository.findAll();
 
         for (Stock stock : allStocks) {
             try {
                 String symbol = stock.getStockCode();
+                
+                // KIS Sandbox는 초당 2건의 속도 제한이 있으므로 100ms는 너무 빠릅니다.
+                // 700ms 정도 딜레이를 주어야 다른 실시간 요청과 충돌하지 않고 안정적으로 동작합니다.
+                Thread.sleep(700);
+
                 StockResponseDto latest = fetchPriceFromKisApi(symbol);
 
                 if (latest != null) {
@@ -418,12 +391,14 @@ public class StockService {
                     String value = latest.getCurrentPrice() + ":"
                             + latest.getChangeAmount() + ":"
                             + latest.getChangeRate() + ":"
-                            + latest.getVolume();
+                            + latest.getVolume() + ":"
+                            + latest.getBasePrice();
 
                     redisTemplate.opsForValue().set(cacheKey, value, Duration.ofMinutes(10));
+                    
+                    // 가격 업데이트 이벤트 발행
+                    eventPublisher.publishEvent(new PriceUpdateEvent(this, symbol, new BigDecimal(latest.getCurrentPrice())));
                 }
-
-                Thread.sleep(100);
             } catch (Exception e) {
                 log.warn("주식({}) 시세 동기화 중 오류: {}", stock.getStockCode(), e.getMessage());
             }
@@ -488,6 +463,7 @@ public class StockService {
                         .changeAmount((String) output.get("prdy_vrss"))
                         .changeRate((String) output.get("prdy_ctrt"))
                         .volume((String) output.get("acml_vol"))
+                        .basePrice((String) output.get("stck_sdpr"))
                         .build();
             } else {
                 log.warn("KIS API 응답에 output 데이터가 없습니다: {}", response.getBody());

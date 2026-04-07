@@ -170,6 +170,7 @@ public class AccountService {
             throw new IllegalArgumentException("기본 계좌만 예수금을 리셋할 수 있습니다.");
         }
 
+        holdingRepository.deleteByAccountId(accountId);
         account.resetCashBalance(new BigDecimal("5000000"));
         Account savedAccount = accountRepository.save(account);
 
