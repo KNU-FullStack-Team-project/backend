@@ -3,6 +3,7 @@ package org.team12.teamproject.security;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -34,6 +35,7 @@ public class SecurityConfig {
                 session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
             )
             .authorizeHttpRequests(auth -> auth
+                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 .requestMatchers(
                     "/users/login",
                     "/users/signup",
@@ -62,7 +64,11 @@ public class SecurityConfig {
         CorsConfiguration configuration = new CorsConfiguration();
 
         configuration.setAllowedOrigins(
-            List.of("http://localhost:3000", "http://localhost:5173")
+            List.of(
+                "http://localhost:3000",
+                "http://localhost:5173",
+                "http://localhost:5174"
+            )
         );
         configuration.setAllowedMethods(
             List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")

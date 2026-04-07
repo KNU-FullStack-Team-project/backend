@@ -11,7 +11,11 @@ import org.team12.teamproject.service.OrderService;
 @RestController
 @RequestMapping("/api/orders")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "http://localhost:5173")
+@CrossOrigin(origins = {
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:3000"
+})
 public class OrderController {
 
     private final OrderService orderService;
