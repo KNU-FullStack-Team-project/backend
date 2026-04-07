@@ -42,10 +42,6 @@ public class OrderService {
 
     @Transactional
     public Order placeMarketBuyOrder(Long accountId, String stockCode, Long quantity) {
-        if (!MarketUtils.isMarketOpen()) {
-            throw new IllegalStateException("주식 시장 운영 시간(평일 09:00 ~ 15:30)에만 주문이 가능합니다.");
-        }
-
         Account account = accountRepository.findById(accountId)
                 .orElseThrow(() -> new IllegalArgumentException("Account not found"));
         Stock stock = stockRepository.findByStockCode(stockCode)
@@ -70,11 +66,8 @@ public class OrderService {
                 .build();
         orderRepository.save(order);
 
-        try {
-            redisTemplate.opsForList().rightPush(ORDER_QUEUE_KEY, "MARKET_BUY:" + order.getId());
-        } catch (Exception e) {
-            log.warn("Redis 주문 큐 푸시 실패: {}", e.getMessage());
-        }
+        // 시장가 주문은 큐를 거치지 않고 즉시 체결 처리
+        processOrder("MARKET_BUY:" + order.getId());
 
         return order;
     }
@@ -109,11 +102,8 @@ public class OrderService {
                 .build();
         orderRepository.save(order);
 
-        try {
-            redisTemplate.opsForList().rightPush(ORDER_QUEUE_KEY, "MARKET_SELL:" + order.getId());
-        } catch (Exception e) {
-            log.warn("Redis 주문 큐 푸시 실패: {}", e.getMessage());
-        }
+        // 시장가 주문은 큐를 거치지 않고 즉시 체결 처리
+        processOrder("MARKET_SELL:" + order.getId());
 
         return order;
     }

@@ -39,6 +39,23 @@ public class StockService {
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    // KIS API 호출 시 최소 간격 보장 (초당 2건 제한 => 500ms 필요, 안전하게 600ms 설정)
+    private long lastApiCallTime = 0;
+    private final long MIN_API_INTERVAL_MS = 600;
+
+    private synchronized void enforceApiRateLimit() {
+        long now = System.currentTimeMillis();
+        long elapsed = now - lastApiCallTime;
+        if (elapsed < MIN_API_INTERVAL_MS) {
+            try {
+                Thread.sleep(MIN_API_INTERVAL_MS - elapsed);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        lastApiCallTime = System.currentTimeMillis();
+    }
+
     // API 호출 타임아웃 설정을 포함한 RestTemplate 생성 (429/504 오류 방지)
     private final RestTemplate restTemplate = createRestTemplate();
 
@@ -99,7 +116,6 @@ public class StockService {
 
                 if (cachedData != null) {
                     String[] parts = cachedData.split(":");
-                    // 주석: 신규 포맷(5개: basePrice 포함) 필수 체크
                     if (parts.length >= 5) {
                         builder.currentPrice(parts[0])
                                .changeAmount(parts[1])
@@ -109,19 +125,32 @@ public class StockService {
                         
                         content.add(builder.build());
                         continue;
-                    } else {
-                        // 규격에 맞지 않는 레디스 데이터 삭제 (동기화 유도)
-                        redisTemplate.delete("stock:price:" + stock.getStockCode());
                     }
                 }
 
-                content.add(getStockDetail(stock.getStockCode()));
+                // 레디스에 데이터가 없는 경우: API를 즉시 호출하지 않고 기본 정보만 반환 (속도 최적화)
+                builder.currentPrice("0")
+                       .changeAmount("0")
+                       .changeRate("0")
+                       .volume("0")
+                       .basePrice("0");
+                content.add(builder.build());
+                
+                // 비동기적으로 해당 종목의 시세를 갱신하도록 유도 (상세 페이지 진입 시 어차피 갱신됨)
             }
         } catch (Exception e) {
-            log.warn("Redis 벌크 조회 실패, 개별 조회로 대체: {}", e.getMessage());
+            log.warn("주식 목록 조회 중 오류 (기본 정보로 대체): {}", e.getMessage());
             content = stockList.stream()
-                    .map(stock -> getStockDetail(stock.getStockCode()))
-                    .toList();
+                    .map(s -> StockResponseDto.builder()
+                            .symbol(s.getStockCode())
+                            .name(s.getStockName())
+                            .currentPrice("0")
+                            .changeAmount("0")
+                            .changeRate("0")
+                            .volume("0")
+                            .basePrice("0")
+                            .build())
+                    .collect(Collectors.toList());
         }
 
         return PageResponseDto.<StockResponseDto>builder()
@@ -197,17 +226,23 @@ public class StockService {
      * period: 1D(5분), 1W(일), 1M(일), 6M(월), 1Y(월)
      */
     public List<StockCandleDto> getStockHistory(String symbol, String period) {
+        return getStockHistory(symbol, period, false);
+    }
+
+    public List<StockCandleDto> getStockHistory(String symbol, String period, boolean forceFetch) {
         String cacheKey = "stock:history:v3:" + symbol + ":" + period;
 
-        try {
-            String cachedData = redisTemplate.opsForValue().get(cacheKey);
-            if (cachedData != null) {
-                TypeReference<List<StockCandleDto>> typeRef = new TypeReference<>() {
-                };
-                return objectMapper.readValue(cachedData, typeRef);
+        if (!forceFetch) {
+            try {
+                String cachedData = redisTemplate.opsForValue().get(cacheKey);
+                if (cachedData != null) {
+                    TypeReference<List<StockCandleDto>> typeRef = new TypeReference<>() {
+                    };
+                    return objectMapper.readValue(cachedData, typeRef);
+                }
+            } catch (Exception e) {
+                log.warn("Redis 캔들 캐시 확인 실패: {}", e.getMessage());
             }
-        } catch (Exception e) {
-            log.warn("Redis 캔들 캐시 확인 실패: {}", e.getMessage());
         }
 
         List<StockCandleDto> resultData = new ArrayList<>();
@@ -253,6 +288,8 @@ public class StockService {
                 headers.set("tr_id", "FHKST03010100");
 
                 HttpEntity<String> entity = new HttpEntity<>(headers);
+                
+                enforceApiRateLimit();
                 ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
 
                 Map<String, Object> body = response.getBody();
@@ -278,7 +315,8 @@ public class StockService {
         if (!resultData.isEmpty()) {
             try {
                 String jsonData = objectMapper.writeValueAsString(resultData);
-                Duration ttl = "1D".equals(period) ? Duration.ofMinutes(1) : Duration.ofMinutes(10);
+                // 스케줄러가 백그라운드에서 1분마다 갱신해주므로 캐시는 여유롭게 10분 유지
+                Duration ttl = Duration.ofMinutes(10);
                 redisTemplate.opsForValue().set(cacheKey, jsonData, ttl);
             } catch (Exception e) {
                 log.warn("Redis 캔들 캐시 저장 실패: {}", e.getMessage());
@@ -295,8 +333,8 @@ public class StockService {
         try {
             ensureAccessToken();
 
-            // 최대 4회 호출하여 장 시작(09:00) 시점까지의 데이터를 충분히 확보 (최대 약 120개 포인트)
-            for (int i = 0; i < 4; i++) {
+            // 최대 2회 호출하여 당일 데이터의 최근 구간들을 충분히 확보 (백그라운드 부하 방지 및 1.2초 내 응답)
+            for (int i = 0; i < 2; i++) {
                 String url = apiUrl + "/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
                         + "?FID_COND_MRKT_DIV_CODE=J"
                         + "&FID_INPUT_ISCD=" + symbol
@@ -313,6 +351,8 @@ public class StockService {
                 headers.set("tr_id", "FHKST03010200");
 
                 HttpEntity<String> entity = new HttpEntity<>(headers);
+                
+                enforceApiRateLimit();
                 ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
 
                 Map<String, Object> body = response.getBody();
@@ -368,43 +408,72 @@ public class StockService {
     }
 
     /**
-     * 전 종목 시세를 Redis에 동기화 (KIS Sandbox 초당 2건 제한 준수를 위해 700ms 딜레이)
-     * fixedDelay를 사용하여 이전 작업이 끝난 후 5분 뒤에 다음 작업이 시작되도록 중첩을 방지합니다.
+     * 활성 종목(보유주, 관심주) 시세를 Redis에 우선 동기화
+     * KIS API 초당 2건 제한 준수를 위해 1000ms 간격으로 호출
      */
-    @Scheduled(fixedDelay = 300000)
+    @Scheduled(fixedDelay = 60000) // 1분마다 실행 (이전 작업 종료 후 1분 뒤)
+    public void updateActiveStockPrices() {
+        log.info(">>> [Scheduled] 활성 종목(보유/관심) 시세 동기화 시작...");
+        List<String> activeCodes = stockRepository.findAllActiveStockCodes();
+        
+        if (activeCodes.isEmpty()) {
+            log.info(">>> [Scheduled] 활성 종목이 없습니다.");
+            return;
+        }
+
+        for (String symbol : activeCodes) {
+            try {
+                // API 제한 준수를 위한 1.5초 대기 (사용자 요청 여유 확보)
+                Thread.sleep(1500);
+
+                StockResponseDto latest = fetchPriceFromKisApi(symbol);
+                if (latest != null) {
+                    saveToRedis(latest);
+                    // 가격 업데이트 이벤트 발행
+                    eventPublisher.publishEvent(new PriceUpdateEvent(this, symbol, new BigDecimal(latest.getCurrentPrice())));
+                }
+                
+                // 해당 종목의 1D(당일 분봉) 차트 데이터를 강제로 백그라운드에서 갱신하여 캐시 적재 (Pre-warming)
+                getStockHistory(symbol, "1D", true);
+                
+            } catch (Exception e) {
+                log.warn("활성 종목({}) 시세 동기화 실패: {}", symbol, e.getMessage());
+            }
+        }
+        log.info(">>> [Scheduled] 활성 종목 시세 동기화 완료 (총 {}건)", activeCodes.size());
+    }
+
+    /**
+     * 전체 종목 시세를 순차적으로 갱신 (전체 종목은 주기를 길게 가져감)
+     */
+    @Scheduled(fixedDelay = 3600000) // 1시간마다 전체 갱신
     public void updateAllStockPricesToRedis() {
-        log.info(">>> [Scheduled] 전 종목 시세 Redis 동기화 시작 (700ms 간격)...");
+        log.info(">>> [Scheduled] 전체 종목 시세 백그라운드 갱신 시작 (1000ms 간격)...");
         List<Stock> allStocks = stockRepository.findAll();
 
         for (Stock stock : allStocks) {
             try {
-                String symbol = stock.getStockCode();
-                
-                // KIS Sandbox는 초당 2건의 속도 제한이 있으므로 100ms는 너무 빠릅니다.
-                // 700ms 정도 딜레이를 주어야 다른 실시간 요청과 충돌하지 않고 안정적으로 동작합니다.
-                Thread.sleep(700);
-
-                StockResponseDto latest = fetchPriceFromKisApi(symbol);
-
+                Thread.sleep(1500);
+                StockResponseDto latest = fetchPriceFromKisApi(stock.getStockCode());
                 if (latest != null) {
-                    String cacheKey = "stock:price:" + symbol;
-                    String value = latest.getCurrentPrice() + ":"
-                            + latest.getChangeAmount() + ":"
-                            + latest.getChangeRate() + ":"
-                            + latest.getVolume() + ":"
-                            + latest.getBasePrice();
-
-                    redisTemplate.opsForValue().set(cacheKey, value, Duration.ofMinutes(10));
-                    
-                    // 가격 업데이트 이벤트 발행
-                    eventPublisher.publishEvent(new PriceUpdateEvent(this, symbol, new BigDecimal(latest.getCurrentPrice())));
+                    saveToRedis(latest);
                 }
             } catch (Exception e) {
-                log.warn("주식({}) 시세 동기화 중 오류: {}", stock.getStockCode(), e.getMessage());
+                log.warn("전체 종목({}) 시세 갱신 중 오류: {}", stock.getStockCode(), e.getMessage());
             }
         }
+        log.info(">>> [Scheduled] 전체 종목 시세 백그라운드 갱신 완료");
+    }
 
-        log.info(">>> [Scheduled] 전 종목 시세 Redis 동기화 완료 (총 {}건)", allStocks.size());
+    private void saveToRedis(StockResponseDto dto) {
+        String cacheKey = "stock:price:" + dto.getSymbol();
+        String value = String.format("%s:%s:%s:%s:%s",
+                dto.getCurrentPrice(),
+                dto.getChangeAmount(),
+                dto.getChangeRate(),
+                dto.getVolume(),
+                dto.getBasePrice());
+        redisTemplate.opsForValue().set(cacheKey, value, Duration.ofMinutes(30));
     }
 
     private void ensureAccessToken() {
@@ -446,7 +515,10 @@ public class StockService {
             headers.set("tr_id", "FHKST01010100");
 
             HttpEntity<String> entity = new HttpEntity<>(headers);
+            
+            enforceApiRateLimit();
             ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
+            
             log.info("KIS API 응답: {}", response.getBody());
 
             if (response.getBody() != null && response.getBody().containsKey("output")) {
@@ -511,6 +583,8 @@ public class StockService {
         bodyMap.put("appsecret", appSecret);
 
         HttpEntity<Map<String, String>> request = new HttpEntity<>(bodyMap, headers);
+        
+        enforceApiRateLimit();
         ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
                 tokenUrl,
                 HttpMethod.POST,
