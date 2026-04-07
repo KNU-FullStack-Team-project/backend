@@ -22,4 +22,13 @@ public interface StockRepository extends JpaRepository<Stock, Long> {
                    "WHERE s.stock_code IN (SELECT stock_symbol FROM favorite_stocks) " +
                    "OR s.stock_id IN (SELECT stock_id FROM holdings)", nativeQuery = true)
     List<String> findAllActiveStockCodes();
+
+    @Query(value = "SELECT * FROM ( " +
+                   "  SELECT a.*, ROWNUM rnum FROM ( " +
+                   "    SELECT * FROM stock " +
+                   "    WHERE stock_name LIKE %:keyword% OR stock_code LIKE %:keyword% " +
+                   "    ORDER BY stock_name ASC " +
+                   "  ) a WHERE ROWNUM <= 50 " +
+                   ") WHERE rnum > 0", nativeQuery = true)
+    List<Stock> searchStocks(@Param("keyword") String keyword);
 }

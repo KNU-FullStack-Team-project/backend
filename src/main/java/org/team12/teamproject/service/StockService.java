@@ -24,8 +24,12 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.*;
 import java.util.stream.Collectors;
-
+import jakarta.annotation.PreDestroy;
+import org.springframework.context.event.EventListener;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.ApplicationEventPublisher;
 import org.team12.teamproject.event.PriceUpdateEvent;
 import java.math.BigDecimal;
@@ -38,10 +42,11 @@ public class StockService {
     private final StockRepository stockRepository;
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final KisWebSocketClient webSocketClient; // 추가
 
-    // KIS API 호출 시 최소 간격 보장 (초당 2건 제한 => 500ms 필요, 안전하게 600ms 설정)
+    // KIS API 호출 시 최소 간격 보장 (초당 2건 제한 => 500ms 필요, 안전하게 550ms 설정)
     private long lastApiCallTime = 0;
-    private final long MIN_API_INTERVAL_MS = 600;
+    private final long MIN_API_INTERVAL_MS = 550;
 
     private synchronized void enforceApiRateLimit() {
         long now = System.currentTimeMillis();
@@ -54,6 +59,70 @@ public class StockService {
             }
         }
         lastApiCallTime = System.currentTimeMillis();
+    }
+
+    // 우선순위 큐 시스템
+    private final PriorityBlockingQueue<StockUpdateTask> updateQueue = new PriorityBlockingQueue<>();
+    private final Set<String> enqueuedSymbols = ConcurrentHashMap.newKeySet();
+    private final ExecutorService workerExecutor = Executors.newSingleThreadExecutor();
+
+    private static class StockUpdateTask implements Comparable<StockUpdateTask> {
+        final String symbol;
+        final int priority; // 1: 실시간 단건(LazyLoad), 2: 활성 종목, 3: 전체 일반 종목
+        final long enqueueTime;
+
+        StockUpdateTask(String symbol, int priority) {
+            this.symbol = symbol;
+            this.priority = priority;
+            this.enqueueTime = System.currentTimeMillis();
+        }
+
+        @Override
+        public int compareTo(StockUpdateTask o) {
+            if (this.priority != o.priority) {
+                return Integer.compare(this.priority, o.priority);
+            }
+            return Long.compare(this.enqueueTime, o.enqueueTime);
+        }
+    }
+
+    @PostConstruct
+    public void startWorker() {
+        workerExecutor.submit(() -> {
+            log.info(">>> KIS API 통신 전용 백그라운드 워커 스레드 시작 (제한: {}ms)", MIN_API_INTERVAL_MS);
+            while (!Thread.currentThread().isInterrupted()) {
+                try {
+                    StockUpdateTask task = updateQueue.take(); // 블로킹 대기
+                    enqueuedSymbols.remove(task.symbol);
+
+                    // Rate Limit 적용 후 통신
+                    StockResponseDto latest = fetchPriceFromKisApi(task.symbol);
+                    if (latest != null) {
+                        saveToRedis(latest);
+                        if (task.priority <= 2) {
+                            eventPublisher.publishEvent(new PriceUpdateEvent(this, task.symbol, new BigDecimal(latest.getCurrentPrice())));
+                        }
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                } catch (Exception e) {
+                    log.error("워커 스레드 실행 중 오류: {}", e.getMessage());
+                }
+            }
+        });
+    }
+
+    @PreDestroy
+    public void stopWorker() {
+        workerExecutor.shutdownNow();
+    }
+
+    private void enqueueUpdate(String symbol, int priority) {
+        if (!enqueuedSymbols.contains(symbol)) {
+            enqueuedSymbols.add(symbol);
+            updateQueue.offer(new StockUpdateTask(symbol, priority));
+        }
     }
 
     // API 호출 타임아웃 설정을 포함한 RestTemplate 생성 (429/504 오류 방지)
@@ -128,7 +197,7 @@ public class StockService {
                     }
                 }
 
-                // 레디스에 데이터가 없는 경우: API를 즉시 호출하지 않고 기본 정보만 반환 (속도 최적화)
+                // 레디스에 데이터가 없는 경우: API를 즉시 호출하지 않고 일단 0원으로 반환 + 우선순위 큐(1단계)에 등록
                 builder.currentPrice("0")
                        .changeAmount("0")
                        .changeRate("0")
@@ -136,7 +205,8 @@ public class StockService {
                        .basePrice("0");
                 content.add(builder.build());
                 
-                // 비동기적으로 해당 종목의 시세를 갱신하도록 유도 (상세 페이지 진입 시 어차피 갱신됨)
+                // 프론트에서 빈 값이 보일 경우, 워커가 신속하게 가져오도록 최상위 우선순위 부여
+                enqueueUpdate(stock.getStockCode(), 1);
             }
         } catch (Exception e) {
             log.warn("주식 목록 조회 중 오류 (기본 정보로 대체): {}", e.getMessage());
@@ -159,6 +229,59 @@ public class StockService {
                 .totalPages(totalPages)
                 .totalElements((int) totalElements)
                 .build();
+    }
+
+    /**
+     * 서버 시작 시 전 종목 시세를 한 번 업데이트 (사용자 요청)
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void syncPricesOnStartup() {
+        log.info(">>> [Startup] 서버 시작 시 전 종목 시세 초기 동기화 및 활성 종목 실시간 웹소켓 구독을 시작합니다...");
+        
+        // 활성 종목을 찾아 웹소켓 구독 등재
+        List<String> activeCodes = stockRepository.findAllActiveStockCodes();
+        for (String code : activeCodes) {
+            webSocketClient.subscribe(code);
+        }
+
+        // 별도 스레드에서 백그라운드 갱신 큐 밀어넣기
+        new Thread(this::updateAllStockPricesToRedis).start();
+    }
+
+    /**
+     * 검색 기능 추가
+     */
+    public List<StockResponseDto> searchStocks(String keyword) {
+        if (keyword == null || keyword.trim().isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        List<Stock> searchResults = stockRepository.searchStocks(keyword);
+        return searchResults.stream()
+                .map(s -> {
+                    String cacheKey = "stock:price:" + s.getStockCode();
+                    String cachedData = redisTemplate.opsForValue().get(cacheKey);
+                    
+                    StockResponseDto.StockResponseDtoBuilder builder = StockResponseDto.builder()
+                            .symbol(s.getStockCode())
+                            .name(s.getStockName());
+
+                    if (cachedData != null) {
+                        String[] parts = cachedData.split(":");
+                        if (parts.length >= 5) {
+                            builder.currentPrice(parts[0])
+                                   .changeAmount(parts[1])
+                                   .changeRate(parts[2])
+                                   .volume(parts[3])
+                                   .basePrice(parts[4]);
+                        }
+                    } else {
+                        builder.currentPrice("0").changeAmount("0").changeRate("0").volume("0").basePrice("0");
+                        enqueueUpdate(s.getStockCode(), 1); // 검색 결과도 최우선으로 수집 요청
+                    }
+                    return builder.build();
+                })
+                .collect(Collectors.toList());
     }
 
     /**
@@ -422,45 +545,22 @@ public class StockService {
         }
 
         for (String symbol : activeCodes) {
-            try {
-                // API 제한 준수를 위한 1.5초 대기 (사용자 요청 여유 확보)
-                Thread.sleep(1500);
-
-                StockResponseDto latest = fetchPriceFromKisApi(symbol);
-                if (latest != null) {
-                    saveToRedis(latest);
-                    // 가격 업데이트 이벤트 발행
-                    eventPublisher.publishEvent(new PriceUpdateEvent(this, symbol, new BigDecimal(latest.getCurrentPrice())));
-                }
-                
-                // 해당 종목의 1D(당일 분봉) 차트 데이터를 강제로 백그라운드에서 갱신하여 캐시 적재 (Pre-warming)
-                getStockHistory(symbol, "1D", true);
-                
-            } catch (Exception e) {
-                log.warn("활성 종목({}) 시세 동기화 실패: {}", symbol, e.getMessage());
-            }
+            webSocketClient.subscribe(symbol); // 실시간 구독이 풀렸을 수 있으니 재요청 (Client에서 중복 건너뜀)
+            enqueueUpdate(symbol, 2);
         }
         log.info(">>> [Scheduled] 활성 종목 시세 동기화 완료 (총 {}건)", activeCodes.size());
     }
 
     /**
-     * 전체 종목 시세를 순차적으로 갱신 (전체 종목은 주기를 길게 가져감)
+     * 전체 종목 시세를 순차적으로 갱신 (사용자 요청으로 주기를 1시간에서 30분으로 단축)
      */
-    @Scheduled(fixedDelay = 3600000) // 1시간마다 전체 갱신
+    @Scheduled(fixedDelay = 1800000) // 30분마다 전체 갱신
     public void updateAllStockPricesToRedis() {
         log.info(">>> [Scheduled] 전체 종목 시세 백그라운드 갱신 시작 (1000ms 간격)...");
         List<Stock> allStocks = stockRepository.findAll();
 
         for (Stock stock : allStocks) {
-            try {
-                Thread.sleep(1500);
-                StockResponseDto latest = fetchPriceFromKisApi(stock.getStockCode());
-                if (latest != null) {
-                    saveToRedis(latest);
-                }
-            } catch (Exception e) {
-                log.warn("전체 종목({}) 시세 갱신 중 오류: {}", stock.getStockCode(), e.getMessage());
-            }
+            enqueueUpdate(stock.getStockCode(), 3);
         }
         log.info(">>> [Scheduled] 전체 종목 시세 백그라운드 갱신 완료");
     }

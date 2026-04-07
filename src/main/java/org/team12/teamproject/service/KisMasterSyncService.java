@@ -44,7 +44,11 @@ public class KisMasterSyncService {
         try {
             syncMarket(KOSPI_URL, "KOSPI");
             syncMarket(KOSDAQ_URL, "KOSDAQ");
-            log.info(">>> [Startup] KIS 전 종목 동기화 완료!");
+            
+            // 신규: 필터링 대상 기존 종목 완전 삭제 실행
+            cleanupIrrelevantStocks();
+            
+            log.info(">>> [Startup] KIS 전 종목 동기화 및 정제 완료!");
         } catch (Exception e) {
             log.error(">>> [Startup] 동기화 중 오류 발생: {}", e.getMessage(), e);
         }
@@ -92,12 +96,20 @@ public class KisMasterSyncService {
                         continue; // 비정상 라인 무시
                     }
 
-                    // KIS 마스터 기준: 0~9 단축코드, 9~21 표준코드, 21~61 한글명
+                    // KIS 마스터 기준: 0~9 단축코드, 9~21 표준코드, 21~61 한글명, 76 시장구분
                     String shortCode = new String(bytes, 0, 9, "MS949").trim();
                     String stockName = new String(bytes, 21, 40, "MS949").trim();
+                    
+                    // 시장구분 코드 파싱 (인덱스 76)
+                    char marketDivCode = ' ';
+                    if (bytes.length > 76) {
+                        marketDivCode = (char) bytes[76];
+                    }
 
-                    // KOSDAQ 파일에는 단축코드 뒤에 KOSDAQ 정보 등이 더 붙을 수 있으므로 trim 필수
-                    // 스팩주 등 특수 문자가 들어간 경우에도 정상 파싱됨.
+                    // 필터링 대상 확인 (5로 시작하거나 주식 '1'이 아닌 경우 등)
+                    if (shouldSkipStock(stockName, shortCode, marketDivCode)) {
+                        continue; 
+                    }
 
                     // DB 체크
                     Stock existing = existingStocks.get(shortCode);
@@ -139,5 +151,81 @@ public class KisMasterSyncService {
         }
 
         log.info("{} 동기화 완료: 신규 추가 {}건, 상호 변경 {}건", marketType, insertCount, updateCount);
+    }
+
+    private boolean shouldSkipStock(String name, String code, char marketDivCode) {
+        if (name == null || name.isEmpty()) return true;
+        
+        String upperName = name.toUpperCase();
+
+        // 1. 종목코드가 '5'로 시작하는 경우 (파생 상품 등)
+        if (code != null && code.startsWith("5")) return true;
+        
+        // 2. 시장구분 코드가 '1'(주식)이 아닌 경우
+        if (marketDivCode != ' ' && marketDivCode != '1') return true;
+
+        // 3. 펀드/리츠/수익증권/ETN 클래스 패턴 및 키워드 필터링
+        // 스크린샷 기반 추가: 부동산, 오피스, 물류, 하이일드, 파생형, Class, 종류, 공모주, 인프라
+        if (upperName.contains("부동산") || 
+            upperName.contains("오피스") || 
+            upperName.contains("물류") || 
+            upperName.contains("하이일드") || 
+            upperName.contains("파생") || 
+            upperName.contains("CLASS") || 
+            upperName.contains("종류") || 
+            upperName.contains("공모주") || 
+            upperName.contains("인프라") ||
+            upperName.contains("핵심성장") || 
+            upperName.contains("혁신산업") || 
+            upperName.contains("포커스") || 
+            upperName.contains("액티브") || 
+            upperName.contains("채권") ||
+            upperName.contains("그로쓰") ||
+            upperName.contains("인덱스") ||
+            upperName.contains("밸류")) {
+            return true;
+        }
+
+        // 4. 명칭 끝에 붙는 클래스 구분자 ( A, C, Ae, C-I 등) 및 괄호 패턴
+        // 괄호 안에 영문이 들어간 명칭이나, 공백 뒤에 영문 클래스가 붙는 경우 제외
+        if (upperName.matches(".*[\\(\\s][A-Z,a-z].*")) {
+            // (우), (주), (전환) 등은 주식이므로 제외 로직
+            if (!upperName.contains("(우)") && !upperName.contains("(주)") && !upperName.contains("(전환)")) {
+                return true; 
+            }
+        }
+
+        // 5. 스팩(SPAC) 및 기타 필터
+        return name.contains("스팩") || 
+               name.contains("기업인수목적") || 
+               name.contains("넥스트웨이브") || 
+               name.matches(".*제\\d+호.*");
+    }
+
+    /**
+     * DB에 남아있는 불필요 종목들을 완전히 삭제합니다.
+     */
+    @Transactional
+    public void cleanupIrrelevantStocks() {
+        log.info(">>> [Cleanup] 불필요 종목(스팩, 코드'5', 비주식 등) 데이터 정리 시작...");
+        List<Stock> allStocks = stockRepository.findAll();
+        log.info(">>> [Cleanup] 전체 종목 수: {}건", allStocks.size());
+        
+        List<Stock> toDelete = allStocks.stream()
+                .filter(s -> {
+                    boolean skip = shouldSkipStock(s.getStockName(), s.getStockCode(), ' ');
+                    if (skip) {
+                        log.info(">>> [Cleanup] 삭제 대상 감지: {} ({})", s.getStockName(), s.getStockCode());
+                    }
+                    return skip;
+                })
+                .collect(Collectors.toList());
+
+        if (!toDelete.isEmpty()) {
+            stockRepository.deleteAllInBatch(toDelete);
+            log.info(">>> [Cleanup] 총 {}건의 불필요 종목을 삭제했습니다.", toDelete.size());
+        } else {
+            log.info(">>> [Cleanup] 삭제할 불필요 종목이 없습니다.");
+        }
     }
 }

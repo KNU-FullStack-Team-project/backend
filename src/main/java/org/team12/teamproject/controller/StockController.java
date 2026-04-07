@@ -52,7 +52,15 @@ public class StockController {
     }
 
     // =========================================================
-    // 4. KIS 토큰 강제 갱신 (임시)
+    // 4. 종목 검색 (추가됨)
+    // =========================================================
+    @GetMapping("/search")
+    public ResponseEntity<?> searchStocks(@RequestParam(name = "keyword") String keyword) {
+        return ResponseEntity.ok(stockService.searchStocks(keyword));
+    }
+
+    // =========================================================
+    // 5. KIS 토큰 강제 갱신 (임시)
     // =========================================================
     @GetMapping("/refresh-token")
     public ResponseEntity<String> refreshToken() {
