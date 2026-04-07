@@ -35,6 +35,11 @@ public class UserController {
         return ResponseEntity.ok(userService.checkEmail(email));
     }
 
+    @GetMapping("/check-nickname")
+    public ResponseEntity<String> checkNickname(@RequestParam String nickname, @RequestParam(required = false) String email) {
+        return ResponseEntity.ok(userService.checkNickname(nickname, email));
+    }
+
     @GetMapping("/profile")
     public ResponseEntity<UserProfileResponseDto> getProfile(@RequestParam String email) {
         return ResponseEntity.ok(userService.getUserProfile(email));
@@ -50,6 +55,11 @@ public class UserController {
     @PostMapping("/change-password")
     public ResponseEntity<String> changePassword(@RequestBody ChangePasswordRequestDto dto) {
         return ResponseEntity.ok(userService.changePassword(dto));
+    }
+
+    @PostMapping("/change-nickname")
+    public ResponseEntity<UserProfileResponseDto> changeNickname(@RequestBody ChangeNicknameRequestDto dto) {
+        return ResponseEntity.ok(userService.changeNickname(dto));
     }
 
     @PostMapping("/reset-password")

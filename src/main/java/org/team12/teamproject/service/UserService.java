@@ -7,6 +7,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 import org.team12.teamproject.dto.ChangePasswordRequestDto;
+import org.team12.teamproject.dto.ChangeNicknameRequestDto;
 import org.team12.teamproject.dto.LoginRequestDto;
 import org.team12.teamproject.dto.LoginResponseDto;
 import org.team12.teamproject.dto.ResetPasswordRequestDto;
@@ -194,6 +195,28 @@ public class UserService {
         return "사용 가능한 이메일입니다.";
     }
 
+    public String checkNickname(String nickname, String email) {
+        String cleanNickname = nickname != null ? nickname.trim() : "";
+        String cleanEmail = email != null ? email.trim() : "";
+
+        if (cleanNickname.isEmpty()) {
+            return "닉네임을 입력해주세요.";
+        }
+
+        if (!cleanEmail.isEmpty()) {
+            User user = userRepository.findByEmail(cleanEmail).orElse(null);
+            if (user != null && cleanNickname.equals(user.getNickname())) {
+                return "사용 가능한 닉네임입니다.";
+            }
+        }
+
+        if (userRepository.countByNickname(cleanNickname) > 0) {
+            return "이미 사용 중인 닉네임입니다.";
+        }
+
+        return "사용 가능한 닉네임입니다.";
+    }
+
     public UserProfileResponseDto getUserProfile(String email) {
         String cleanEmail = email != null ? email.trim() : "";
         User user = userRepository.findByEmail(cleanEmail)
@@ -278,6 +301,32 @@ public class UserService {
         userRepository.save(user);
 
         return "비밀번호가 변경되었습니다.";
+    }
+
+    public UserProfileResponseDto changeNickname(ChangeNicknameRequestDto dto) {
+        String email = dto.getEmail() != null ? dto.getEmail().trim() : "";
+        String nickname = dto.getNickname() != null ? dto.getNickname().trim() : "";
+
+        if (email.isEmpty()) {
+            throw new RuntimeException("회원 정보를 찾을 수 없습니다.");
+        }
+
+        if (nickname.isEmpty()) {
+            throw new RuntimeException("닉네임을 입력해주세요.");
+        }
+
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("회원정보가 일치하지 않습니다."));
+
+        if (!nickname.equals(user.getNickname()) && userRepository.countByNickname(nickname) > 0) {
+            throw new RuntimeException("이미 사용 중인 닉네임입니다.");
+        }
+
+        user.setNickname(nickname);
+        user.setUpdatedAt(LocalDateTime.now());
+        userRepository.save(user);
+
+        return toUserProfile(user);
     }
 
     public String resetPassword(ResetPasswordRequestDto dto) {
