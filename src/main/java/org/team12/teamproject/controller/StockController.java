@@ -10,7 +10,11 @@ import lombok.RequiredArgsConstructor;
 @RestController
 @RequestMapping("/api/stocks")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "http://localhost:5173")
+@CrossOrigin(origins = {
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:3000"
+})
 public class StockController {
 
     private final StockService stockService;

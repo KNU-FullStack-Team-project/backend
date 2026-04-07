@@ -3,6 +3,7 @@ package org.team12.teamproject.security;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -25,26 +26,35 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        System.out.println("=== SecurityConfig loaded ===");
+
         http
-            .cors(cors -> cors.configurationSource(corsConfigurationSource())) // CORS 설정 적용
-            .csrf(csrf -> csrf.disable()) // API 서버이므로 CSRF 비활성화
-            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)) // 세션 미사용
+            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+            .csrf(csrf -> csrf.disable())
+            .sessionManagement(session ->
+                session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+            )
             .authorizeHttpRequests(auth -> auth
+                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 .requestMatchers(
-                    "/users/login", 
-                    "/users/signup", 
-                    "/users/check-email", 
-                    "/users/profile-image", // 회원가입 시 이미지 업로드를 위해 허용
+                    "/users/login",
+                    "/users/signup",
+                    "/users/check-email",
+                    "/users/profile-image",
                     "/profile/**",
-                    "/api/stocks/**", 
+                    "/api/stocks/**",
                     "/email/**",
                     "/users/reset-password",
-                    "/api/competitions/**"
-                ).permitAll() // 공개 API
-                .requestMatchers("/api/admin/**").hasRole("ADMIN") // 관리자 전용
-                .anyRequest().authenticated() // 나머지는 인증 필요
+                    "/api/competitions/**",
+                    "/api/community/**"
+                ).permitAll()
+                .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                .anyRequest().authenticated()
             )
-            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+            .addFilterBefore(
+                jwtAuthenticationFilter,
+                UsernamePasswordAuthenticationFilter.class
+            );
 
         return http.build();
     }
@@ -52,12 +62,22 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(List.of("http://localhost:3000", "http://localhost:5173")); // 리액트(Vite) 주소 허용
-        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("*")); // 모든 헤더 허용 (CORS 403 방지)
+
+        configuration.setAllowedOrigins(
+            List.of(
+                "http://localhost:3000",
+                "http://localhost:5173",
+                "http://localhost:5174"
+            )
+        );
+        configuration.setAllowedMethods(
+            List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+        );
+        configuration.setAllowedHeaders(List.of("*"));
         configuration.setAllowCredentials(true);
-        
-        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+
+        UrlBasedCorsConfigurationSource source =
+            new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);
         return source;
     }

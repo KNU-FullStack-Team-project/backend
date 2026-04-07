@@ -10,7 +10,11 @@ import org.team12.teamproject.service.UserService;
 @RestController
 @RequestMapping("/users")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "http://localhost:5173")
+@CrossOrigin(origins = {
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:3000"
+})
 public class UserController {
 
     private final UserService userService;
@@ -31,6 +35,11 @@ public class UserController {
         return ResponseEntity.ok(userService.checkEmail(email));
     }
 
+    @GetMapping("/check-nickname")
+    public ResponseEntity<String> checkNickname(@RequestParam String nickname, @RequestParam(required = false) String email) {
+        return ResponseEntity.ok(userService.checkNickname(nickname, email));
+    }
+
     @GetMapping("/profile")
     public ResponseEntity<UserProfileResponseDto> getProfile(@RequestParam String email) {
         return ResponseEntity.ok(userService.getUserProfile(email));
@@ -46,6 +55,11 @@ public class UserController {
     @PostMapping("/change-password")
     public ResponseEntity<String> changePassword(@RequestBody ChangePasswordRequestDto dto) {
         return ResponseEntity.ok(userService.changePassword(dto));
+    }
+
+    @PostMapping("/change-nickname")
+    public ResponseEntity<UserProfileResponseDto> changeNickname(@RequestBody ChangeNicknameRequestDto dto) {
+        return ResponseEntity.ok(userService.changeNickname(dto));
     }
 
     @PostMapping("/reset-password")
