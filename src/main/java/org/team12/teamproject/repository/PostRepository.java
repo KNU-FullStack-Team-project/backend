@@ -1,0 +1,14 @@
+package org.team12.teamproject.repository;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.team12.teamproject.entity.Post;
+
+import java.util.List;
+import java.util.Optional;
+
+public interface PostRepository extends JpaRepository<Post, Long> {
+
+    List<Post> findByStockIdAndStatusOrderByCreatedAtDesc(Long stockId, String status);
+
+    Optional<Post> findByIdAndStatus(Long postId, String status);
+}

@@ -25,23 +25,25 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        System.out.println("=== SecurityConfig loaded ===");
         http
-            .cors(cors -> cors.configurationSource(corsConfigurationSource())) // CORS 설정 적용
-            .csrf(csrf -> csrf.disable()) // API 서버이므로 CSRF 비활성화
-            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)) // 세션 미사용
+            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+            .csrf(csrf -> csrf.disable())
+            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(
-                    "/users/login", 
-                    "/users/signup", 
-                    "/users/check-email", 
-                    "/users/profile-image", // 회원가입 시 이미지 업로드를 위해 허용
-                    "/api/stocks/**", 
+                    "/users/login",
+                    "/users/signup",
+                    "/users/check-email",
+                    "/users/profile-image",
+                    "/api/stocks/**",
                     "/email/**",
                     "/users/reset-password",
-                    "/api/competitions/**"
-                ).permitAll() // 공개 API
-                .requestMatchers("/api/admin/**").hasRole("ADMIN") // 관리자 전용
-                .anyRequest().authenticated() // 나머지는 인증 필요
+                    "/api/competitions/**",
+                    "/api/community/**"   // 임시로 전체 허용
+                ).permitAll()
+                .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                .anyRequest().authenticated()
             )
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
@@ -51,11 +53,11 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(List.of("http://localhost:3000", "http://localhost:5173")); // 리액트(Vite) 주소 허용
+        configuration.setAllowedOrigins(List.of("http://localhost:3000", "http://localhost:5173"));
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("*")); // 모든 헤더 허용 (CORS 403 방지)
+        configuration.setAllowedHeaders(List.of("*"));
         configuration.setAllowCredentials(true);
-        
+
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);
         return source;
