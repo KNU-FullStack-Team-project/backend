@@ -13,4 +13,5 @@ public class OrderRequestDto {
     private String orderType; // MARKET, LIMIT
     private String orderSide; // BUY, SELL
     private BigDecimal price; // LIMIT 일때만
+    private String requestId; // 중복 주문 방지용 고유 ID
 }

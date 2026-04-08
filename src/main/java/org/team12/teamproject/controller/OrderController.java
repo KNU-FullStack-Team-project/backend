@@ -26,18 +26,18 @@ public class OrderController {
             Order order;
             if ("BUY".equalsIgnoreCase(req.getOrderSide())) {
                 if ("MARKET".equalsIgnoreCase(req.getOrderType())) {
-                    order = orderService.placeMarketBuyOrder(req.getAccountId(), req.getStockCode(), req.getQuantity());
+                    order = orderService.placeMarketBuyOrder(req.getAccountId(), req.getStockCode(), req.getQuantity(), req.getRequestId());
                 } else {
                     order = orderService.placeLimitBuyOrder(req.getAccountId(), req.getStockCode(), req.getQuantity(),
-                            req.getPrice());
+                            req.getPrice(), req.getRequestId());
                 }
             } else {
                 // SELL인 경우
                 if ("MARKET".equalsIgnoreCase(req.getOrderType())) {
-                    order = orderService.placeMarketSellOrder(req.getAccountId(), req.getStockCode(), req.getQuantity());
+                    order = orderService.placeMarketSellOrder(req.getAccountId(), req.getStockCode(), req.getQuantity(), req.getRequestId());
                 } else {
                     order = orderService.placeLimitSellOrder(req.getAccountId(), req.getStockCode(), req.getQuantity(),
-                            req.getPrice());
+                            req.getPrice(), req.getRequestId());
                 }
             }
             return ResponseEntity.ok().body("Order placed successfully. Status: " + order.getOrderStatus());

@@ -22,6 +22,7 @@ import org.team12.teamproject.util.MarketUtils;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -41,7 +42,8 @@ public class OrderService {
     private static final String ORDER_QUEUE_KEY = "orders:queue";
 
     @Transactional
-    public Order placeMarketBuyOrder(Long accountId, String stockCode, Long quantity) {
+    public Order placeMarketBuyOrder(Long accountId, String stockCode, Long quantity, String requestId) {
+        checkIdempotency(requestId);
         Account account = accountRepository.findById(accountId)
                 .orElseThrow(() -> new IllegalArgumentException("Account not found"));
         Stock stock = stockRepository.findByStockCode(stockCode)
@@ -73,7 +75,8 @@ public class OrderService {
     }
 
     @Transactional
-    public Order placeMarketSellOrder(Long accountId, String stockCode, Long quantity) {
+    public Order placeMarketSellOrder(Long accountId, String stockCode, Long quantity, String requestId) {
+        checkIdempotency(requestId);
         Account account = accountRepository.findById(accountId)
                 .orElseThrow(() -> new IllegalArgumentException("Account not found"));
         Stock stock = stockRepository.findByStockCode(stockCode)
@@ -109,7 +112,8 @@ public class OrderService {
     }
 
     @Transactional
-    public Order placeLimitBuyOrder(Long accountId, String stockCode, Long quantity, BigDecimal limitPrice) {
+    public Order placeLimitBuyOrder(Long accountId, String stockCode, Long quantity, BigDecimal limitPrice, String requestId) {
+        checkIdempotency(requestId);
         if (!MarketUtils.isMarketOpen()) {
             throw new IllegalStateException("주식 시장 운영 시간(평일 09:00 ~ 15:30)에만 주문이 가능합니다.");
         }
@@ -155,7 +159,8 @@ public class OrderService {
     }
 
     @Transactional
-    public Order placeLimitSellOrder(Long accountId, String stockCode, Long quantity, BigDecimal limitPrice) {
+    public Order placeLimitSellOrder(Long accountId, String stockCode, Long quantity, BigDecimal limitPrice, String requestId) {
+        checkIdempotency(requestId);
         if (!MarketUtils.isMarketOpen()) {
             throw new IllegalStateException("주식 시장 운영 시간(평일 09:00 ~ 15:30)에만 주문이 가능합니다.");
         }
@@ -331,5 +336,16 @@ public class OrderService {
         }
         
         orderRepository.save(order);
+    }
+
+    private void checkIdempotency(String requestId) {
+        if (requestId == null || requestId.trim().isEmpty()) {
+            return;
+        }
+        String lockKey = "order:idempotency:" + requestId;
+        Boolean isFirstRequest = redisTemplate.opsForValue().setIfAbsent(lockKey, "processed", Duration.ofSeconds(20));
+        if (Boolean.FALSE.equals(isFirstRequest)) {
+            throw new IllegalStateException("이미 처리 중이거나 완료된 주문 요청입니다. (중복 방지)");
+        }
     }
 }
