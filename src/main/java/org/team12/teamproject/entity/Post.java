@@ -87,4 +87,12 @@ public class Post implements Serializable {
         this.deletedAt = LocalDateTime.now();
         this.updatedAt = LocalDateTime.now();
     }
+    public void increaseLikeCount() {
+    this.likeCount = (this.likeCount == null ? 0 : this.likeCount) + 1;
+}
+
+public void decreaseLikeCount() {
+    int current = this.likeCount == null ? 0 : this.likeCount;
+    this.likeCount = Math.max(0, current - 1);
+}
 }
