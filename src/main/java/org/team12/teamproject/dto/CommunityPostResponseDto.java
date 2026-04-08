@@ -17,6 +17,7 @@ public class CommunityPostResponseDto {
     private boolean hasBoughtStock;
     private String title;
     private Integer commentCount;
+    private Integer likeCount;
     private Integer viewCount;
     private LocalDateTime createdAt;
 }

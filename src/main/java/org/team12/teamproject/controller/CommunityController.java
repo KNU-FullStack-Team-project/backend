@@ -50,9 +50,29 @@ public class CommunityController {
 
     @GetMapping("/posts/{postId}")
     public ResponseEntity<CommunityPostDetailResponseDto> getPostDetail(
-            @PathVariable Long postId
+            @PathVariable Long postId,
+            Authentication authentication
     ) {
-        return ResponseEntity.ok(communityService.getPostDetail(postId));
+        String email = authentication != null ? authentication.getName() : null;
+        return ResponseEntity.ok(communityService.getPostDetail(postId, email));
+    }
+
+    @PostMapping("/posts/{postId}/like")
+    public ResponseEntity<?> likePost(
+            @PathVariable Long postId,
+            Authentication authentication
+    ) {
+        try {
+            if (authentication == null || authentication.getName() == null) {
+                return ResponseEntity.status(401).body("로그인이 필요합니다.");
+            }
+
+            String email = authentication.getName();
+            communityService.likePost(postId, email);
+            return ResponseEntity.ok("추천이 반영되었습니다.");
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
     }
 
     @PutMapping("/posts/{postId}")
