@@ -8,4 +8,5 @@ import lombok.Setter;
 public class CommunityPostUpdateRequestDto {
     private String title;
     private String content;
+    private Boolean isNotice;
 }

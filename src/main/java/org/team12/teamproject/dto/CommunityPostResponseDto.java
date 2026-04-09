@@ -20,4 +20,5 @@ public class CommunityPostResponseDto {
     private Integer likeCount;
     private Integer viewCount;
     private LocalDateTime createdAt;
+    private Boolean isNotice;
 }

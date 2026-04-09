@@ -17,7 +17,6 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/community")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "http://localhost:5173")
 public class CommunityController {
 
     private final CommunityService communityService;
@@ -26,6 +25,7 @@ public class CommunityController {
     public ResponseEntity<List<CommunityPostResponseDto>> getStockPosts(
             @PathVariable String symbol
     ) {
+        System.out.println("=== getStockPosts controller hit: " + symbol);
         return ResponseEntity.ok(communityService.getStockPosts(symbol));
     }
 
@@ -41,7 +41,10 @@ public class CommunityController {
             }
 
             String email = authentication.getName();
-            Long postId = communityService.createStockPost(symbol, request, email);
+            boolean isAdmin = authentication.getAuthorities().stream()
+                    .anyMatch(auth -> "ROLE_ADMIN".equals(auth.getAuthority()));
+
+            Long postId = communityService.createStockPost(symbol, request, email, isAdmin);
             return ResponseEntity.ok(postId);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(e.getMessage());
@@ -55,6 +58,18 @@ public class CommunityController {
     ) {
         String email = authentication != null ? authentication.getName() : null;
         return ResponseEntity.ok(communityService.getPostDetail(postId, email));
+    }
+
+    @PostMapping("/posts/{postId}/view")
+    public ResponseEntity<?> increaseViewCount(
+            @PathVariable Long postId
+    ) {
+        try {
+            communityService.increaseViewCount(postId);
+            return ResponseEntity.ok("조회수가 증가되었습니다.");
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
     }
 
     @PostMapping("/posts/{postId}/like")
@@ -164,4 +179,9 @@ public class CommunityController {
             return ResponseEntity.badRequest().body(e.getMessage());
         }
     }
+    @GetMapping("/notices")
+public ResponseEntity<List<CommunityPostResponseDto>> getNoticePosts() {
+    return ResponseEntity.ok(communityService.getNoticePosts());
+}
+
 }

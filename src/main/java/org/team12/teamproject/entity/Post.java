@@ -62,6 +62,9 @@ public class Post implements Serializable {
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
 
+    @Column(name = "is_notice", nullable = false)
+private Boolean isNotice;
+
     public void increaseViewCount() {
         this.viewCount = this.viewCount + 1;
     }
@@ -76,11 +79,13 @@ public class Post implements Serializable {
         }
     }
 
-    public void updatePost(String title, String content) {
-        this.title = title;
-        this.content = content;
-        this.updatedAt = LocalDateTime.now();
-    }
+    public void updatePost(String title, String content, Boolean isNotice) {
+    this.title = title;
+    this.content = content;
+    this.isNotice = isNotice;
+    this.updatedAt = LocalDateTime.now();
+}
+    
 
     public void softDelete() {
         this.status = "DELETED";
@@ -95,4 +100,5 @@ public void decreaseLikeCount() {
     int current = this.likeCount == null ? 0 : this.likeCount;
     this.likeCount = Math.max(0, current - 1);
 }
+
 }

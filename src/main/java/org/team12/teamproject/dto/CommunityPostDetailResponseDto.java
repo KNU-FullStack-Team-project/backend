@@ -25,4 +25,5 @@ public class CommunityPostDetailResponseDto {
     private LocalDateTime createdAt;
     private Boolean likedByCurrentUser;
     private List<CommunityCommentResponseDto> comments;
+    private Boolean isNotice;
 }

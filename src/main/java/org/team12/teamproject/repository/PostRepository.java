@@ -8,7 +8,14 @@ import java.util.Optional;
 
 public interface PostRepository extends JpaRepository<Post, Long> {
 
-    List<Post> findByStockIdAndStatusOrderByCreatedAtDesc(Long stockId, String status);
+    // 최근 공지 3개
+    List<Post> findTop3ByIsNoticeTrueAndStatusOrderByCreatedAtDesc(String status);
+
+    // 공지 전체 목록 (공지탭용)
+    List<Post> findByIsNoticeTrueAndStatusOrderByCreatedAtDesc(String status);
+
+    // 종목 일반글 목록
+    List<Post> findByStockIdAndStatusAndIsNoticeFalseOrderByCreatedAtDesc(Long stockId, String status);
 
     Optional<Post> findByIdAndStatus(Long postId, String status);
 }

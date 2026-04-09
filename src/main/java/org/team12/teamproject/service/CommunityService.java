@@ -24,6 +24,7 @@ import org.team12.teamproject.repository.StockRepository;
 import org.team12.teamproject.repository.UserRepository;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -42,30 +43,72 @@ public class CommunityService {
 
     @Transactional(readOnly = true)
     public List<CommunityPostResponseDto> getStockPosts(String symbol) {
+        System.out.println("=== service getStockPosts start: " + symbol);
         Stock stock = stockRepository.findByStockCode(symbol)
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 종목입니다."));
 
-        return postRepository.findByStockIdAndStatusOrderByCreatedAtDesc(stock.getId(), "NORMAL")
-                .stream()
+        List<Post> notices =
+    postRepository.findByIsNoticeTrueAndStatusOrderByCreatedAtDesc("NORMAL");
+
+if (notices.size() > 3) {
+    notices = notices.subList(0, 3);
+}
+
+        List<Post> stockPosts = postRepository
+                .findByStockIdAndStatusAndIsNoticeFalseOrderByCreatedAtDesc(stock.getId(), "NORMAL");
+                System.out.println("=== notices size = " + notices.size());
+    System.out.println("=== stockPosts size = " + stockPosts.size());
+
+        List<Post> mergedPosts = new ArrayList<>();
+        mergedPosts.addAll(notices);
+        mergedPosts.addAll(stockPosts);
+
+        return mergedPosts.stream()
                 .map(post -> CommunityPostResponseDto.builder()
                         .postId(post.getId())
-                        .stockId(stock.getId())
-                        .stockCode(stock.getStockCode())
-                        .stockName(stock.getStockName())
+                        .stockId(post.getStock() != null ? post.getStock().getId() : null)
+                        .stockCode(post.getStock() != null ? post.getStock().getStockCode() : null)
+                        .stockName(post.getStock() != null ? post.getStock().getStockName() : null)
                         .userId(post.getUser().getId())
                         .nickname(post.getUser().getNickname())
-                        .hasBoughtStock(hasBoughtStock(post.getUser().getId(), stock.getId()))
+                        .hasBoughtStock(
+                                post.getStock() != null &&
+                                hasBoughtStock(post.getUser().getId(), post.getStock().getId())
+                        )
                         .title(post.getTitle())
                         .commentCount(post.getCommentCount())
                         .viewCount(post.getViewCount())
                         .likeCount(post.getLikeCount())
+                        .isNotice(post.getIsNotice())
+                        .createdAt(post.getCreatedAt())
+                        .build())
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<CommunityPostResponseDto> getNoticePosts() {
+        return postRepository.findByIsNoticeTrueAndStatusOrderByCreatedAtDesc("NORMAL")
+                .stream()
+                .map(post -> CommunityPostResponseDto.builder()
+                        .postId(post.getId())
+                        .stockId(null)
+                        .stockCode(null)
+                        .stockName(null)
+                        .userId(post.getUser().getId())
+                        .nickname(post.getUser().getNickname())
+                        .hasBoughtStock(false)
+                        .title(post.getTitle())
+                        .commentCount(post.getCommentCount())
+                        .viewCount(post.getViewCount())
+                        .likeCount(post.getLikeCount())
+                        .isNotice(post.getIsNotice())
                         .createdAt(post.getCreatedAt())
                         .build())
                 .toList();
     }
 
     @Transactional
-    public Long createStockPost(String symbol, CommunityPostCreateRequestDto request, String email) {
+    public Long createStockPost(String symbol, CommunityPostCreateRequestDto request, String email, boolean isAdmin) {
         Stock stock = stockRepository.findByStockCode(symbol)
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 종목입니다."));
 
@@ -83,10 +126,12 @@ public class CommunityService {
             throw new IllegalArgumentException("내용을 입력해주세요.");
         }
 
+        boolean isNotice = isAdmin && Boolean.TRUE.equals(request.getIsNotice());
+
         Post post = Post.builder()
                 .board(board)
                 .user(user)
-                .stock(stock)
+                .stock(isNotice ? null : stock)
                 .title(request.getTitle().trim())
                 .content(request.getContent().trim())
                 .viewCount(0)
@@ -94,6 +139,7 @@ public class CommunityService {
                 .commentCount(0)
                 .reportCount(0)
                 .status("NORMAL")
+                .isNotice(isNotice)
                 .createdAt(LocalDateTime.now())
                 .updatedAt(LocalDateTime.now())
                 .build();
@@ -101,12 +147,10 @@ public class CommunityService {
         return postRepository.save(post).getId();
     }
 
-    @Transactional
+    @Transactional(readOnly = true)
     public CommunityPostDetailResponseDto getPostDetail(Long postId, String email) {
         Post post = postRepository.findByIdAndStatus(postId, "NORMAL")
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 게시글입니다."));
-
-        post.increaseViewCount();
 
         Stock stock = post.getStock();
 
@@ -144,10 +188,19 @@ public class CommunityService {
                 .commentCount(post.getCommentCount())
                 .likeCount(post.getLikeCount())
                 .viewCount(post.getViewCount())
+                .isNotice(post.getIsNotice())
                 .createdAt(post.getCreatedAt())
                 .likedByCurrentUser(likedByCurrentUser)
                 .comments(comments)
                 .build();
+    }
+
+    @Transactional
+    public void increaseViewCount(Long postId) {
+        Post post = postRepository.findByIdAndStatus(postId, "NORMAL")
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 게시글입니다."));
+
+        post.increaseViewCount();
     }
 
     @Transactional
@@ -157,6 +210,10 @@ public class CommunityService {
 
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 사용자입니다."));
+
+        if (post.getUser().getId().equals(user.getId())) {
+            throw new IllegalArgumentException("본인 글은 추천할 수 없습니다.");
+        }
 
         boolean alreadyLiked = postLikeRepository.existsByPostIdAndUserId(postId, user.getId());
         if (alreadyLiked) {
@@ -245,7 +302,12 @@ public class CommunityService {
             throw new IllegalArgumentException("내용을 입력해주세요.");
         }
 
-        post.updatePost(request.getTitle().trim(), request.getContent().trim());
+        boolean isNotice = post.getIsNotice();
+        if (isAdmin) {
+            isNotice = Boolean.TRUE.equals(request.getIsNotice());
+        }
+
+        post.updatePost(request.getTitle().trim(), request.getContent().trim(), isNotice);
     }
 
     @Transactional
