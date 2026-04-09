@@ -11,6 +11,7 @@ import org.team12.teamproject.dto.OrderResponseDto;
 import org.team12.teamproject.dto.StockResponseDto;
 import org.team12.teamproject.entity.Account;
 import org.team12.teamproject.entity.Holding;
+import org.team12.teamproject.entity.NotificationType;
 import org.team12.teamproject.entity.Order;
 import org.team12.teamproject.entity.Stock;
 import org.team12.teamproject.event.PriceUpdateEvent;
@@ -38,6 +39,7 @@ public class OrderService {
     private final HoldingRepository holdingRepository;
     private final StockService stockService;
     private final StringRedisTemplate redisTemplate;
+    private final NotificationService notificationService;
 
     private static final String ORDER_QUEUE_KEY = "orders:queue";
 
@@ -84,7 +86,7 @@ public class OrderService {
 
         Holding holding = holdingRepository.findByAccountIdAndStockId(accountId, stock.getId())
                 .orElseThrow(() -> new IllegalArgumentException("보유 중인 주식이 없습니다."));
-        
+
         if (holding.getQuantity() < quantity) {
             throw new IllegalArgumentException("보유 수량이 부족합니다.");
         }
@@ -114,6 +116,7 @@ public class OrderService {
     @Transactional
     public Order placeLimitBuyOrder(Long accountId, String stockCode, Long quantity, BigDecimal limitPrice, String requestId) {
         checkIdempotency(requestId);
+            
         if (!MarketUtils.isMarketOpen()) {
             throw new IllegalStateException("주식 시장 운영 시간(평일 09:00 ~ 15:30)에만 주문이 가능합니다.");
         }
@@ -128,13 +131,13 @@ public class OrderService {
         BigDecimal basePrice = (stockDetail.getBasePrice() != null && !stockDetail.getBasePrice().isEmpty()) 
                 ? new BigDecimal(stockDetail.getBasePrice()) 
                 : currentPrice;
-        
         BigDecimal lowerLimit = basePrice.multiply(BigDecimal.valueOf(0.7)).setScale(0, RoundingMode.FLOOR);
         BigDecimal upperLimit = basePrice.multiply(BigDecimal.valueOf(1.3)).setScale(0, RoundingMode.CEILING);
 
         if (limitPrice.compareTo(lowerLimit) < 0 || limitPrice.compareTo(upperLimit) > 0) {
             throw new IllegalArgumentException("지정가는 전일 종가(" + basePrice + ") 기준 ±30% 이내여야 합니다. (범위: " + lowerLimit + " ~ " + upperLimit + ")");
         }
+                    
 
         BigDecimal totalAmount = limitPrice.multiply(BigDecimal.valueOf(quantity));
         account.deductBalance(totalAmount);
@@ -161,6 +164,7 @@ public class OrderService {
     @Transactional
     public Order placeLimitSellOrder(Long accountId, String stockCode, Long quantity, BigDecimal limitPrice, String requestId) {
         checkIdempotency(requestId);
+            
         if (!MarketUtils.isMarketOpen()) {
             throw new IllegalStateException("주식 시장 운영 시간(평일 09:00 ~ 15:30)에만 주문이 가능합니다.");
         }
@@ -172,7 +176,7 @@ public class OrderService {
 
         Holding holding = holdingRepository.findByAccountIdAndStockId(accountId, stock.getId())
                 .orElseThrow(() -> new IllegalArgumentException("보유 중인 주식이 없습니다."));
-        
+
         if (holding.getQuantity() < quantity) {
             throw new IllegalArgumentException("보유 수량이 부족합니다.");
         }
@@ -285,6 +289,18 @@ public class OrderService {
         }
         
         orderRepository.save(order);
+
+        // 알림 발송
+        String sideStr = "BUY".equals(order.getOrderSide()) ? "매수" : "매도";
+        String title = "주문 체결 소식";
+        String message = String.format("[%s] %d주 %s 체결 완료 (가격: %s)",
+                order.getStock().getStockName(),
+                order.getQuantity(),
+                sideStr,
+                order.getPrice().setScale(0).toString());
+
+        notificationService.sendNotification(order.getAccount().getUser(), title, message,
+                NotificationType.ORDER_COMPLETED);
     }
 
     @Transactional(readOnly = true)
@@ -324,8 +340,10 @@ public class OrderService {
             String fullRedisValue = "MARKET_" + order.getOrderSide().toUpperCase() + ":" + order.getId();
             redisTemplate.opsForList().remove(ORDER_QUEUE_KEY, 1, fullRedisValue);
         } else if ("PENDING".equals(status)) {
-            String redisKey = "orders:pending:" + order.getOrderSide().toLowerCase() + ":" + order.getStock().getStockCode();
+            String redisKey = "orders:pending:" + order.getOrderSide().toLowerCase() + ":"
+                    + order.getStock().getStockCode();
             redisTemplate.opsForZSet().remove(redisKey, order.getId().toString());
+
         }
 
         order.cancel();

@@ -309,3 +309,16 @@ CREATE TABLE favorite_stocks (
 
 -- 2. 시퀀스 생성 (엔티티의 @SequenceGenerator와 일치)
 CREATE SEQUENCE favorite_stock_seq START WITH 1 INCREMENT BY 1;
+
+-- 3. 목표가 알림 테이블 생성 (추가)
+CREATE TABLE price_alerts (
+    price_alert_id NUMBER PRIMARY KEY,
+    user_id NUMBER NOT NULL,
+    stock_id NUMBER NOT NULL,
+    target_price NUMBER(18,2) NOT NULL,
+    direction VARCHAR2(10) NOT NULL, -- ABOVE, BELOW
+    is_active NUMBER NOT NULL, -- 1 for true, 0 for false
+    created_at DATE NOT NULL,
+    CONSTRAINT fk_alert_user FOREIGN KEY (user_id) REFERENCES users(user_id),
+    CONSTRAINT fk_alert_stock FOREIGN KEY (stock_id) REFERENCES stock(stock_id)
+);
