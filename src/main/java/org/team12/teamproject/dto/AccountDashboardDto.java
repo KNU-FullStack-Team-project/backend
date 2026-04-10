@@ -30,6 +30,7 @@ public class AccountDashboardDto {
         private String averageBuyPrice;
         private String currentPrice;
         private String holdingValue;
+        private BigDecimal holdingValueRaw; // 정렬용 원천 데이터
     }
 
     @Getter
