@@ -478,4 +478,10 @@ public class UserService {
         }
     }
 
+    public String refreshToken(String email) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다."));
+        return jwtUtil.generateToken(user.getEmail(), user.getRole());
+    }
+
 }
