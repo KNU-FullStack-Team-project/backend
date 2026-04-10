@@ -10,6 +10,7 @@ import org.team12.teamproject.dto.CommunityPostCreateRequestDto;
 import org.team12.teamproject.dto.CommunityPostDetailResponseDto;
 import org.team12.teamproject.dto.CommunityPostResponseDto;
 import org.team12.teamproject.dto.CommunityPostUpdateRequestDto;
+import org.team12.teamproject.dto.CommunityReportRequestDto;
 import org.team12.teamproject.service.CommunityService;
 
 import java.util.List;
@@ -61,9 +62,7 @@ public class CommunityController {
     }
 
     @PostMapping("/posts/{postId}/view")
-    public ResponseEntity<?> increaseViewCount(
-            @PathVariable Long postId
-    ) {
+    public ResponseEntity<?> increaseViewCount(@PathVariable Long postId) {
         try {
             communityService.increaseViewCount(postId);
             return ResponseEntity.ok("조회수가 증가되었습니다.");
@@ -85,6 +84,24 @@ public class CommunityController {
             String email = authentication.getName();
             communityService.likePost(postId, email);
             return ResponseEntity.ok("추천이 반영되었습니다.");
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    @PostMapping("/posts/{postId}/report")
+    public ResponseEntity<?> reportPost(
+            @PathVariable Long postId,
+            @RequestBody CommunityReportRequestDto request,
+            Authentication authentication
+    ) {
+        try {
+            if (authentication == null || authentication.getName() == null) {
+                return ResponseEntity.status(401).body("로그인이 필요합니다.");
+            }
+
+            communityService.reportPost(postId, request, authentication.getName());
+            return ResponseEntity.ok("게시글 신고가 접수되었습니다.");
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(e.getMessage());
         }
@@ -134,9 +151,7 @@ public class CommunityController {
     }
 
     @GetMapping("/posts/{postId}/comments")
-    public ResponseEntity<List<CommunityCommentResponseDto>> getComments(
-            @PathVariable Long postId
-    ) {
+    public ResponseEntity<List<CommunityCommentResponseDto>> getComments(@PathVariable Long postId) {
         return ResponseEntity.ok(communityService.getComments(postId));
     }
 
@@ -154,6 +169,24 @@ public class CommunityController {
             String email = authentication.getName();
             Long commentId = communityService.createComment(postId, request, email);
             return ResponseEntity.ok(commentId);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    @PostMapping("/comments/{commentId}/report")
+    public ResponseEntity<?> reportComment(
+            @PathVariable Long commentId,
+            @RequestBody CommunityReportRequestDto request,
+            Authentication authentication
+    ) {
+        try {
+            if (authentication == null || authentication.getName() == null) {
+                return ResponseEntity.status(401).body("로그인이 필요합니다.");
+            }
+
+            communityService.reportComment(commentId, request, authentication.getName());
+            return ResponseEntity.ok("댓글 신고가 접수되었습니다.");
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(e.getMessage());
         }
@@ -179,9 +212,9 @@ public class CommunityController {
             return ResponseEntity.badRequest().body(e.getMessage());
         }
     }
-    @GetMapping("/notices")
-public ResponseEntity<List<CommunityPostResponseDto>> getNoticePosts() {
-    return ResponseEntity.ok(communityService.getNoticePosts());
-}
 
+    @GetMapping("/notices")
+    public ResponseEntity<List<CommunityPostResponseDto>> getNoticePosts() {
+        return ResponseEntity.ok(communityService.getNoticePosts());
+    }
 }
