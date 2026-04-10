@@ -9,16 +9,21 @@ import org.team12.teamproject.dto.CommunityPostCreateRequestDto;
 import org.team12.teamproject.dto.CommunityPostDetailResponseDto;
 import org.team12.teamproject.dto.CommunityPostResponseDto;
 import org.team12.teamproject.dto.CommunityPostUpdateRequestDto;
+import org.team12.teamproject.dto.CommunityReportRequestDto;
 import org.team12.teamproject.entity.Board;
 import org.team12.teamproject.entity.Comment;
+import org.team12.teamproject.entity.CommentReport;
 import org.team12.teamproject.entity.Post;
 import org.team12.teamproject.entity.PostLike;
+import org.team12.teamproject.entity.PostReport;
 import org.team12.teamproject.entity.Stock;
 import org.team12.teamproject.entity.User;
 import org.team12.teamproject.repository.BoardRepository;
+import org.team12.teamproject.repository.CommentReportRepository;
 import org.team12.teamproject.repository.CommentRepository;
 import org.team12.teamproject.repository.OrderRepository;
 import org.team12.teamproject.repository.PostLikeRepository;
+import org.team12.teamproject.repository.PostReportRepository;
 import org.team12.teamproject.repository.PostRepository;
 import org.team12.teamproject.repository.StockRepository;
 import org.team12.teamproject.repository.UserRepository;
@@ -26,6 +31,7 @@ import org.team12.teamproject.repository.UserRepository;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -38,8 +44,19 @@ public class CommunityService {
     private final UserRepository userRepository;
     private final OrderRepository orderRepository;
     private final PostLikeRepository postLikeRepository;
+    private final PostReportRepository postReportRepository;
+    private final CommentReportRepository commentReportRepository;
 
     private static final String STOCK_DISCUSSION_BOARD_CODE = "STOCK_DISCUSSION";
+
+    private static final Set<String> ALLOWED_REPORT_REASONS = Set.of(
+            "ABUSE",
+            "SPAM",
+            "ADVERTISEMENT",
+            "SEXUAL",
+            "ILLEGAL_FILMING",
+            "ETC"
+    );
 
     @Transactional(readOnly = true)
     public List<CommunityPostResponseDto> getStockPosts(String symbol) {
@@ -48,16 +65,17 @@ public class CommunityService {
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 종목입니다."));
 
         List<Post> notices =
-    postRepository.findByIsNoticeTrueAndStatusOrderByCreatedAtDesc("NORMAL");
+                postRepository.findByIsNoticeTrueAndStatusOrderByCreatedAtDesc("NORMAL");
 
-if (notices.size() > 3) {
-    notices = notices.subList(0, 3);
-}
+        if (notices.size() > 3) {
+            notices = notices.subList(0, 3);
+        }
 
         List<Post> stockPosts = postRepository
                 .findByStockIdAndStatusAndIsNoticeFalseOrderByCreatedAtDesc(stock.getId(), "NORMAL");
-                System.out.println("=== notices size = " + notices.size());
-    System.out.println("=== stockPosts size = " + stockPosts.size());
+
+        System.out.println("=== notices size = " + notices.size());
+        System.out.println("=== stockPosts size = " + stockPosts.size());
 
         List<Post> mergedPosts = new ArrayList<>();
         mergedPosts.addAll(notices);
@@ -199,7 +217,6 @@ if (notices.size() > 3) {
     public void increaseViewCount(Long postId) {
         Post post = postRepository.findByIdAndStatus(postId, "NORMAL")
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 게시글입니다."));
-
         post.increaseViewCount();
     }
 
@@ -270,16 +287,6 @@ if (notices.size() > 3) {
                 .toList();
     }
 
-    private boolean hasBoughtStock(Long userId, Long stockId) {
-        return orderRepository
-                .existsByAccountUserIdAndStockIdAndOrderSideIgnoreCaseAndOrderStatusIgnoreCase(
-                        userId,
-                        stockId,
-                        "BUY",
-                        "COMPLETED"
-                ) == 1;
-    }
-
     @Transactional
     public void updatePost(Long postId, CommunityPostUpdateRequestDto request, String email, boolean isAdmin) {
         Post post = postRepository.findByIdAndStatus(postId, "NORMAL")
@@ -344,5 +351,96 @@ if (notices.size() > 3) {
         Post post = comment.getPost();
         comment.softDelete();
         post.decreaseCommentCount();
+    }
+
+    @Transactional
+    public void reportPost(Long postId, CommunityReportRequestDto request, String email) {
+        Post post = postRepository.findByIdAndStatus(postId, "NORMAL")
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 게시글입니다."));
+
+        User reporter = userRepository.findByEmail(email)
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 사용자입니다."));
+
+        validateReportReason(request);
+
+        if (post.getUser().getId().equals(reporter.getId())) {
+            throw new IllegalArgumentException("본인 게시글은 신고할 수 없습니다.");
+        }
+
+        boolean alreadyReported = postReportRepository.existsByPostIdAndReporterUserId(postId, reporter.getId());
+        if (alreadyReported) {
+            throw new IllegalArgumentException("이미 신고한 게시글입니다.");
+        }
+
+        PostReport postReport = PostReport.builder()
+                .post(post)
+                .reporterUser(reporter)
+                .reason(request.getReason().trim())
+                .detail(normalizeDetail(request.getDetail()))
+                .reportStatus("PENDING")
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        postReportRepository.save(postReport);
+        post.increaseReportCount();
+    }
+
+    @Transactional
+    public void reportComment(Long commentId, CommunityReportRequestDto request, String email) {
+        Comment comment = commentRepository.findByIdAndStatus(commentId, "NORMAL")
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 댓글입니다."));
+
+        User reporter = userRepository.findByEmail(email)
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 사용자입니다."));
+
+        validateReportReason(request);
+
+        if (comment.getUser().getId().equals(reporter.getId())) {
+            throw new IllegalArgumentException("본인 댓글은 신고할 수 없습니다.");
+        }
+
+        boolean alreadyReported = commentReportRepository.existsByCommentIdAndReporterUserId(commentId, reporter.getId());
+        if (alreadyReported) {
+            throw new IllegalArgumentException("이미 신고한 댓글입니다.");
+        }
+
+        CommentReport commentReport = CommentReport.builder()
+                .comment(comment)
+                .reporterUser(reporter)
+                .reason(request.getReason().trim())
+                .detail(normalizeDetail(request.getDetail()))
+                .reportStatus("PENDING")
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        commentReportRepository.save(commentReport);
+    }
+
+    private void validateReportReason(CommunityReportRequestDto request) {
+        if (request.getReason() == null || request.getReason().trim().isEmpty()) {
+            throw new IllegalArgumentException("신고 사유를 선택해주세요.");
+        }
+
+        String reason = request.getReason().trim();
+        if (!ALLOWED_REPORT_REASONS.contains(reason)) {
+            throw new IllegalArgumentException("올바르지 않은 신고 사유입니다.");
+        }
+    }
+
+    private String normalizeDetail(String detail) {
+        if (detail == null || detail.trim().isEmpty()) {
+            return null;
+        }
+        return detail.trim();
+    }
+
+    private boolean hasBoughtStock(Long userId, Long stockId) {
+        return orderRepository
+                .existsByAccountUserIdAndStockIdAndOrderSideIgnoreCaseAndOrderStatusIgnoreCase(
+                        userId,
+                        stockId,
+                        "BUY",
+                        "COMPLETED"
+                ) == 1;
     }
 }
