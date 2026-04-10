@@ -46,7 +46,9 @@ public class SecurityConfig {
                     "/email/**",
                     "/users/reset-password",
                     "/api/competitions/**",
-                    "/api/community/**"
+                    "/api/community/**",
+                    "/api/notifications**"
+                    "/api/notifications/**"
                 ).permitAll()
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 .anyRequest().authenticated()
