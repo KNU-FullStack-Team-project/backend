@@ -100,5 +100,8 @@ public void decreaseLikeCount() {
     int current = this.likeCount == null ? 0 : this.likeCount;
     this.likeCount = Math.max(0, current - 1);
 }
+public void increaseReportCount() {
+    this.reportCount = (this.reportCount == null ? 0 : this.reportCount) + 1;
+}
 
 }
