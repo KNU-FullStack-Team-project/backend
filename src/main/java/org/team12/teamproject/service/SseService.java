@@ -15,7 +15,8 @@ public class SseService {
     private final Map<Long, SseEmitter> emitters = new ConcurrentHashMap<>();
 
     public SseEmitter subscribe(Long userId) {
-        SseEmitter emitter = new SseEmitter(Long.MAX_VALUE); // 연결 만료 시간 무제한 (연결 유지)
+        // 타임아웃을 30분(1,800,000ms)으로 설정합니다.
+        SseEmitter emitter = new SseEmitter(1800000L); 
         
         // 연결 즉시 더미 데이터를 보내 연결 성공을 알림
         try {
@@ -29,15 +30,15 @@ public class SseService {
         emitters.put(userId, emitter);
 
         emitter.onCompletion(() -> {
-            log.info("SSE 연결 완료 (UserId: {})", userId);
+            log.info("SSE 연결 종료: Completion (UserId: {})", userId);
             emitters.remove(userId);
         });
         emitter.onTimeout(() -> {
-            log.info("SSE 연결 타임아웃 (UserId: {})", userId);
+            log.info("SSE 연결 종료: Timeout (UserId: {})", userId);
             emitters.remove(userId);
         });
         emitter.onError((e) -> {
-            log.error("SSE 연결 에러 (UserId: {}): {}", userId, e.getMessage());
+            log.debug("SSE 연결 중단 (UserId: {}): {}", userId, e.getMessage());
             emitters.remove(userId);
         });
 

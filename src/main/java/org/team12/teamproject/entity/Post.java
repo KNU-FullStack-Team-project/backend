@@ -35,7 +35,8 @@ public class Post implements Serializable {
     @Column(name = "title", nullable = false, length = 200)
     private String title;
 
-    @Column(name = "content", nullable = false, length = 4000)
+    @Lob
+    @Column(name = "content", nullable = false)
     private String content;
 
     @Column(name = "view_count", nullable = false)

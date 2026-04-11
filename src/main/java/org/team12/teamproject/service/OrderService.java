@@ -2,7 +2,6 @@ package org.team12.teamproject.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -116,7 +115,8 @@ public class OrderService {
     @Transactional
     public Order placeLimitBuyOrder(Long accountId, String stockCode, Long quantity, BigDecimal limitPrice, String requestId) {
         checkIdempotency(requestId);
-            
+
+        // 주식 시장 운영 시간 검증 활성화
         if (!MarketUtils.isMarketOpen()) {
             throw new IllegalStateException("주식 시장 운영 시간(평일 09:00 ~ 15:30)에만 주문이 가능합니다.");
         }
@@ -134,10 +134,10 @@ public class OrderService {
         BigDecimal lowerLimit = basePrice.multiply(BigDecimal.valueOf(0.7)).setScale(0, RoundingMode.FLOOR);
         BigDecimal upperLimit = basePrice.multiply(BigDecimal.valueOf(1.3)).setScale(0, RoundingMode.CEILING);
 
-        if (limitPrice.compareTo(lowerLimit) < 0 || limitPrice.compareTo(upperLimit) > 0) {
+        // 상하한가 검증 활성화 (단, 데이터 미동기화로 인해 basePrice가 0인 경우는 제외)
+        if (basePrice.compareTo(BigDecimal.ZERO) > 0 && (limitPrice.compareTo(lowerLimit) < 0 || limitPrice.compareTo(upperLimit) > 0)) {
             throw new IllegalArgumentException("지정가는 전일 종가(" + basePrice + ") 기준 ±30% 이내여야 합니다. (범위: " + lowerLimit + " ~ " + upperLimit + ")");
         }
-                    
 
         BigDecimal totalAmount = limitPrice.multiply(BigDecimal.valueOf(quantity));
         account.deductBalance(totalAmount);
@@ -164,7 +164,8 @@ public class OrderService {
     @Transactional
     public Order placeLimitSellOrder(Long accountId, String stockCode, Long quantity, BigDecimal limitPrice, String requestId) {
         checkIdempotency(requestId);
-            
+
+        // 주식 시장 운영 시간 검증 활성화
         if (!MarketUtils.isMarketOpen()) {
             throw new IllegalStateException("주식 시장 운영 시간(평일 09:00 ~ 15:30)에만 주문이 가능합니다.");
         }
@@ -190,7 +191,8 @@ public class OrderService {
         BigDecimal lowerLimit = basePrice.multiply(BigDecimal.valueOf(0.7)).setScale(0, RoundingMode.FLOOR);
         BigDecimal upperLimit = basePrice.multiply(BigDecimal.valueOf(1.3)).setScale(0, RoundingMode.CEILING);
 
-        if (limitPrice.compareTo(lowerLimit) < 0 || limitPrice.compareTo(upperLimit) > 0) {
+        // 상하한가 검증 활성화
+        if (basePrice.compareTo(BigDecimal.ZERO) > 0 && (limitPrice.compareTo(lowerLimit) < 0 || limitPrice.compareTo(upperLimit) > 0)) {
             throw new IllegalArgumentException("지정가는 전일 종가(" + basePrice + ") 기준 ±30% 이내여야 합니다. (범위: " + lowerLimit + " ~ " + upperLimit + ")");
         }
 

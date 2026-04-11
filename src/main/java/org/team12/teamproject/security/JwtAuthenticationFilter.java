@@ -10,7 +10,6 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
-import org.team12.teamproject.security.JwtUtil;
 
 import java.io.IOException;
 import java.util.Collections;
@@ -25,11 +24,19 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
         
+        String token = null;
         String authHeader = request.getHeader("Authorization");
 
+        // 1. 헤더에서 토큰 추출
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
-            String token = authHeader.substring(7);
-            
+            token = authHeader.substring(7);
+        } 
+        // 2. 헤더에 없고 SSE 구독 요청인 경우 쿼리 파라미터에서 추출
+        else if (request.getRequestURI().contains("/api/notifications/subscribe")) {
+            token = request.getParameter("token");
+        }
+
+        if (token != null) {
             if (jwtUtil.validateToken(token)) {
                 String email = jwtUtil.getEmailFromToken(token);
                 String role = jwtUtil.getRoleFromToken(token);
