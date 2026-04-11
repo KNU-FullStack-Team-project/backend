@@ -5,6 +5,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.team12.teamproject.dto.*;
+
+import java.util.Map;
 import org.team12.teamproject.service.UserService;
 
 @RestController
@@ -28,6 +30,18 @@ public class UserController {
     public ResponseEntity<LoginResponseDto> login(@RequestBody LoginRequestDto loginRequestDto) {
         LoginResponseDto response = userService.login(loginRequestDto);
         return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/refresh")
+    public ResponseEntity<String> refresh(@RequestBody Map<String, String> body) {
+        try {
+            String email = body.get("email");
+            if (email == null || email.trim().isEmpty()) return ResponseEntity.badRequest().body("Email is required");
+            String newToken = userService.refreshToken(email);
+            return ResponseEntity.ok(newToken);
+        } catch (Exception e) {
+            return ResponseEntity.status(401).body("Refresh failed: " + e.getMessage());
+        }
     }
 
     @GetMapping("/check-email")

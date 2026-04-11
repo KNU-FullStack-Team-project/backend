@@ -39,7 +39,9 @@ public class SecurityConfig {
                 .requestMatchers(
                     "/users/login",
                     "/users/signup",
+                    "/users/refresh",
                     "/users/check-email",
+                    "/error",
                     "/users/profile-image",
                     "/profile/**",
                     "/uploads/**",
@@ -47,8 +49,8 @@ public class SecurityConfig {
                     "/email/**",
                     "/users/reset-password",
                     "/api/competitions/**",
-                    "/api/community/**",
-                    "/api/notifications**"
+                    "/api/community/**"
+                    //"/api/notifications**"
                 ).permitAll()
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 .anyRequest().authenticated()
@@ -76,6 +78,7 @@ public class SecurityConfig {
             List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
         );
         configuration.setAllowedHeaders(List.of("*"));
+        configuration.setExposedHeaders(List.of("Authorization"));
         configuration.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source =

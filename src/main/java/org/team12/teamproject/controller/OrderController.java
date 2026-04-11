@@ -40,9 +40,10 @@ public class OrderController {
                             req.getPrice(), req.getRequestId());
                 }
             }
-            return ResponseEntity.ok().body("Order placed successfully. Status: " + order.getOrderStatus());
+            return ResponseEntity.ok().body("주문이 성공적으로 접수되었습니다.");
+            
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body("Order failed: " + e.getMessage());
+            return ResponseEntity.badRequest().body(e.getMessage());
         }
     }
 
