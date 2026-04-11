@@ -120,6 +120,7 @@ public class AccountService {
                     .averageBuyPrice(CURRENCY_FORMAT.format(h.getAverageBuyPrice()))
                     .currentPrice(CURRENCY_FORMAT.format(currentPrice))
                     .holdingValue(CURRENCY_FORMAT.format(holdingValue))
+                    .holdingValueRaw(holdingValue)
                     .build());
         }
 
