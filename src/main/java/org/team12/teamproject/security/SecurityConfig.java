@@ -42,13 +42,13 @@ public class SecurityConfig {
                     "/users/check-email",
                     "/users/profile-image",
                     "/profile/**",
+                    "/uploads/**",
                     "/api/stocks/**",
                     "/email/**",
                     "/users/reset-password",
                     "/api/competitions/**",
                     "/api/community/**",
                     "/api/notifications**"
-                    "/api/notifications/**"
                 ).permitAll()
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 .anyRequest().authenticated()

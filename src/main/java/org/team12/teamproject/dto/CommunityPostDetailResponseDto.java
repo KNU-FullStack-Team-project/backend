@@ -26,4 +26,5 @@ public class CommunityPostDetailResponseDto {
     private Boolean likedByCurrentUser;
     private List<CommunityCommentResponseDto> comments;
     private Boolean isNotice;
+    private List<CommunityAttachmentResponseDto> attachments;
 }

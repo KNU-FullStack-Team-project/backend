@@ -3,6 +3,7 @@ package org.team12.teamproject.service;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.team12.teamproject.dto.CommunityAttachmentResponseDto;
 import org.team12.teamproject.dto.CommunityCommentCreateRequestDto;
 import org.team12.teamproject.dto.CommunityCommentResponseDto;
 import org.team12.teamproject.dto.CommunityPostCreateRequestDto;
@@ -14,6 +15,7 @@ import org.team12.teamproject.entity.Board;
 import org.team12.teamproject.entity.Comment;
 import org.team12.teamproject.entity.CommentReport;
 import org.team12.teamproject.entity.Post;
+import org.team12.teamproject.entity.PostAttachment;
 import org.team12.teamproject.entity.PostLike;
 import org.team12.teamproject.entity.PostReport;
 import org.team12.teamproject.entity.Stock;
@@ -22,6 +24,7 @@ import org.team12.teamproject.repository.BoardRepository;
 import org.team12.teamproject.repository.CommentReportRepository;
 import org.team12.teamproject.repository.CommentRepository;
 import org.team12.teamproject.repository.OrderRepository;
+import org.team12.teamproject.repository.PostAttachmentRepository;
 import org.team12.teamproject.repository.PostLikeRepository;
 import org.team12.teamproject.repository.PostReportRepository;
 import org.team12.teamproject.repository.PostRepository;
@@ -30,6 +33,7 @@ import org.team12.teamproject.repository.UserRepository;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -46,6 +50,7 @@ public class CommunityService {
     private final PostLikeRepository postLikeRepository;
     private final PostReportRepository postReportRepository;
     private final CommentReportRepository commentReportRepository;
+    private final PostAttachmentRepository postAttachmentRepository;
 
     private static final String STOCK_DISCUSSION_BOARD_CODE = "STOCK_DISCUSSION";
 
@@ -60,7 +65,6 @@ public class CommunityService {
 
     @Transactional(readOnly = true)
     public List<CommunityPostResponseDto> getStockPosts(String symbol) {
-        System.out.println("=== service getStockPosts start: " + symbol);
         Stock stock = stockRepository.findByStockCode(symbol)
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 종목입니다."));
 
@@ -73,9 +77,6 @@ public class CommunityService {
 
         List<Post> stockPosts = postRepository
                 .findByStockIdAndStatusAndIsNoticeFalseOrderByCreatedAtDesc(stock.getId(), "NORMAL");
-
-        System.out.println("=== notices size = " + notices.size());
-        System.out.println("=== stockPosts size = " + stockPosts.size());
 
         List<Post> mergedPosts = new ArrayList<>();
         mergedPosts.addAll(notices);
@@ -136,13 +137,7 @@ public class CommunityService {
         Board board = boardRepository.findByBoardCode(STOCK_DISCUSSION_BOARD_CODE)
                 .orElseThrow(() -> new IllegalArgumentException("종목 토론 게시판이 존재하지 않습니다."));
 
-        if (request.getTitle() == null || request.getTitle().trim().isEmpty()) {
-            throw new IllegalArgumentException("제목을 입력해주세요.");
-        }
-
-        if (request.getContent() == null || request.getContent().trim().isEmpty()) {
-            throw new IllegalArgumentException("내용을 입력해주세요.");
-        }
+        validatePostRequest(request.getTitle(), request.getContent());
 
         boolean isNotice = isAdmin && Boolean.TRUE.equals(request.getIsNotice());
 
@@ -162,7 +157,9 @@ public class CommunityService {
                 .updatedAt(LocalDateTime.now())
                 .build();
 
-        return postRepository.save(post).getId();
+        Post savedPost = postRepository.save(post);
+        syncAttachments(savedPost, user, request.getAttachmentIds(), false);
+        return savedPost.getId();
     }
 
     @Transactional(readOnly = true)
@@ -181,6 +178,19 @@ public class CommunityService {
                         .nickname(comment.getUser().getNickname())
                         .content(comment.getContent())
                         .createdAt(comment.getCreatedAt())
+                        .build())
+                .toList();
+
+        List<CommunityAttachmentResponseDto> attachments = postAttachmentRepository
+                .findByPostIdOrderByCreatedAtAsc(postId)
+                .stream()
+                .map(attachment -> CommunityAttachmentResponseDto.builder()
+                        .attachmentId(attachment.getId())
+                        .originalName(attachment.getOriginalName())
+                        .fileUrl(attachment.getFileUrl())
+                        .fileType(attachment.getFileType())
+                        .contentType(attachment.getContentType())
+                        .fileSize(attachment.getFileSize())
                         .build())
                 .toList();
 
@@ -210,6 +220,7 @@ public class CommunityService {
                 .createdAt(post.getCreatedAt())
                 .likedByCurrentUser(likedByCurrentUser)
                 .comments(comments)
+                .attachments(attachments)
                 .build();
     }
 
@@ -301,13 +312,7 @@ public class CommunityService {
             throw new IllegalArgumentException("본인 게시글만 수정할 수 있습니다.");
         }
 
-        if (request.getTitle() == null || request.getTitle().trim().isEmpty()) {
-            throw new IllegalArgumentException("제목을 입력해주세요.");
-        }
-
-        if (request.getContent() == null || request.getContent().trim().isEmpty()) {
-            throw new IllegalArgumentException("내용을 입력해주세요.");
-        }
+        validatePostRequest(request.getTitle(), request.getContent());
 
         boolean isNotice = post.getIsNotice();
         if (isAdmin) {
@@ -315,6 +320,7 @@ public class CommunityService {
         }
 
         post.updatePost(request.getTitle().trim(), request.getContent().trim(), isNotice);
+        syncAttachments(post, loginUser, request.getAttachmentIds(), true);
     }
 
     @Transactional
@@ -432,6 +438,58 @@ public class CommunityService {
             return null;
         }
         return detail.trim();
+    }
+
+    private void validatePostRequest(String title, String content) {
+        if (title == null || title.trim().isEmpty()) {
+            throw new IllegalArgumentException("제목을 입력해주세요.");
+        }
+
+        if (content == null || content.trim().isEmpty()) {
+            throw new IllegalArgumentException("내용을 입력해주세요.");
+        }
+    }
+
+    private void syncAttachments(Post post, User user, List<Long> attachmentIds, boolean isUpdate) {
+        List<Long> normalizedIds = attachmentIds == null
+                ? List.of()
+                : attachmentIds.stream()
+                    .filter(id -> id != null)
+                    .distinct()
+                    .toList();
+
+        if (isUpdate) {
+            List<PostAttachment> existingAttachments = postAttachmentRepository.findByPostIdOrderByCreatedAtAsc(post.getId());
+            Set<Long> keepIds = new LinkedHashSet<>(normalizedIds);
+
+            for (PostAttachment existing : existingAttachments) {
+                if (!keepIds.contains(existing.getId())) {
+                    existing.detachFromPost();
+                }
+            }
+        }
+
+        if (normalizedIds.isEmpty()) {
+            return;
+        }
+
+        List<PostAttachment> attachments = postAttachmentRepository.findByIdIn(normalizedIds);
+
+        if (attachments.size() != normalizedIds.size()) {
+            throw new IllegalArgumentException("존재하지 않는 첨부파일이 포함되어 있습니다.");
+        }
+
+        for (PostAttachment attachment : attachments) {
+            if (!attachment.isOwner(user.getId())) {
+                throw new IllegalArgumentException("본인이 업로드한 파일만 첨부할 수 있습니다.");
+            }
+
+            if (attachment.getPost() != null && !attachment.getPost().getId().equals(post.getId())) {
+                throw new IllegalArgumentException("이미 다른 게시글에 연결된 첨부파일입니다.");
+            }
+
+            attachment.assignToPost(post);
+        }
     }
 
     private boolean hasBoughtStock(Long userId, Long stockId) {

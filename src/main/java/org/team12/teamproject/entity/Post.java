@@ -35,7 +35,8 @@ public class Post implements Serializable {
     @Column(name = "title", nullable = false, length = 200)
     private String title;
 
-    @Column(name = "content", nullable = false, length = 4000)
+    @Lob
+    @Column(name = "content", nullable = false)
     private String content;
 
     @Column(name = "view_count", nullable = false)
@@ -63,7 +64,7 @@ public class Post implements Serializable {
     private LocalDateTime deletedAt;
 
     @Column(name = "is_notice", nullable = false)
-private Boolean isNotice;
+    private Boolean isNotice;
 
     public void increaseViewCount() {
         this.viewCount = this.viewCount + 1;
@@ -80,28 +81,28 @@ private Boolean isNotice;
     }
 
     public void updatePost(String title, String content, Boolean isNotice) {
-    this.title = title;
-    this.content = content;
-    this.isNotice = isNotice;
-    this.updatedAt = LocalDateTime.now();
-}
-    
+        this.title = title;
+        this.content = content;
+        this.isNotice = isNotice;
+        this.updatedAt = LocalDateTime.now();
+    }
 
     public void softDelete() {
         this.status = "DELETED";
         this.deletedAt = LocalDateTime.now();
         this.updatedAt = LocalDateTime.now();
     }
+
     public void increaseLikeCount() {
-    this.likeCount = (this.likeCount == null ? 0 : this.likeCount) + 1;
-}
+        this.likeCount = (this.likeCount == null ? 0 : this.likeCount) + 1;
+    }
 
-public void decreaseLikeCount() {
-    int current = this.likeCount == null ? 0 : this.likeCount;
-    this.likeCount = Math.max(0, current - 1);
-}
-public void increaseReportCount() {
-    this.reportCount = (this.reportCount == null ? 0 : this.reportCount) + 1;
-}
+    public void decreaseLikeCount() {
+        int current = this.likeCount == null ? 0 : this.likeCount;
+        this.likeCount = Math.max(0, current - 1);
+    }
 
+    public void increaseReportCount() {
+        this.reportCount = (this.reportCount == null ? 0 : this.reportCount) + 1;
+    }
 }
