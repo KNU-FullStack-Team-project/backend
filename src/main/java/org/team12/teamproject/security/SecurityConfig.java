@@ -50,7 +50,7 @@ public class SecurityConfig {
                     "/users/reset-password",
                     "/api/competitions/**",
                     "/api/community/**",
-                    "/api/notifications**",
+                    "/api/notifications/**",
                     "/api/admin/**"
                 ).permitAll()
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")

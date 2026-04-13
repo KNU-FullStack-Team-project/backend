@@ -15,30 +15,38 @@ public class SseService {
     private final Map<Long, SseEmitter> emitters = new ConcurrentHashMap<>();
 
     public SseEmitter subscribe(Long userId) {
-        // 타임아웃을 30분(1,800,000ms)으로 설정합니다.
-        SseEmitter emitter = new SseEmitter(1800000L); 
-        
-        // 연결 즉시 더미 데이터를 보내 연결 성공을 알림
+
+        // ✅ 1. 기존 emitter 있으면 종료 (중복 방지)
+        if (emitters.containsKey(userId)) {
+            emitters.get(userId).complete();
+        }
+
+        SseEmitter emitter = new SseEmitter(1800000L);
+        emitters.put(userId, emitter);
+
+        // ✅ 2. 초기 연결 확인 이벤트
         try {
             emitter.send(SseEmitter.event()
                     .name("connect")
                     .data("connected"));
         } catch (IOException e) {
-            log.error("SSE 연결 초기 데이터 전송 실패: {}", e.getMessage());
+            log.debug("초기 SSE 연결 실패 (UserId: {})", userId);
+            emitter.complete(); // ✅ 중요
         }
 
-        emitters.put(userId, emitter);
-
+        // ✅ 3. 공통 제거 로직
         emitter.onCompletion(() -> {
-            log.info("SSE 연결 종료: Completion (UserId: {})", userId);
+            log.info("SSE 종료: Completion (UserId: {})", userId);
             emitters.remove(userId);
         });
+
         emitter.onTimeout(() -> {
-            log.info("SSE 연결 종료: Timeout (UserId: {})", userId);
+            log.info("SSE 종료: Timeout (UserId: {})", userId);
             emitters.remove(userId);
         });
+
         emitter.onError((e) -> {
-            log.debug("SSE 연결 중단 (UserId: {}): {}", userId, e.getMessage());
+            log.debug("SSE 에러 (UserId: {})", userId);
             emitters.remove(userId);
         });
 
@@ -47,13 +55,17 @@ public class SseService {
 
     public void sendNotification(Long userId, Object data) {
         SseEmitter emitter = emitters.get(userId);
+
         if (emitter != null) {
             try {
                 emitter.send(SseEmitter.event()
                         .name("notification")
                         .data(data));
             } catch (IOException e) {
-                log.error("SSE 알림 전송 실패 (UserId: {}): {}", userId, e.getMessage());
+                // ✅ 4. 핵심: 에러 로그 → debug + complete
+                log.debug("SSE 연결 끊김 (UserId: {})", userId);
+
+                emitter.complete();   // ✅ 반드시 추가
                 emitters.remove(userId);
             }
         }
