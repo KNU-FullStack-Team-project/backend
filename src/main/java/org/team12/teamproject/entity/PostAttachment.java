@@ -63,4 +63,9 @@ public class PostAttachment {
     public boolean isOwner(Long userId) {
         return this.user != null && this.user.getId().equals(userId);
     }
+    public void updateFileInfo(String storedName, String fileUrl, Post post) {
+        this.storedName = storedName;
+        this.fileUrl = fileUrl;
+        this.post = post;
+    }
 }
