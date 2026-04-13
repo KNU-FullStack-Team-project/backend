@@ -11,6 +11,8 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 
     List<Order> findByAccountIdOrderByOrderedAtDesc(Long accountId);
 
+    List<Order> findByAccount_User_IdOrderByOrderedAtDesc(Long userId);
+
     @Query(value = """
         SELECT CASE
                  WHEN COUNT(*) > 0 THEN 1

@@ -18,4 +18,6 @@ public interface PostRepository extends JpaRepository<Post, Long> {
     List<Post> findByStockIdAndStatusAndIsNoticeFalseOrderByCreatedAtDesc(Long stockId, String status);
 
     Optional<Post> findByIdAndStatus(Long postId, String status);
+
+    List<Post> findByUser_IdOrderByCreatedAtDesc(Long userId);
 }
