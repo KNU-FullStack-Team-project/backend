@@ -1,6 +1,7 @@
 package org.team12.teamproject.service;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.team12.teamproject.dto.CommunityAttachmentResponseDto;
@@ -31,7 +32,14 @@ import org.team12.teamproject.repository.PostRepository;
 import org.team12.teamproject.repository.StockRepository;
 import org.team12.teamproject.repository.UserRepository;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -40,6 +48,9 @@ import java.util.Set;
 @Service
 @RequiredArgsConstructor
 public class CommunityService {
+
+    @Value("${app.upload.dir:uploads}")
+    private String uploadDir;
 
     private final BoardRepository boardRepository;
     private final PostRepository postRepository;
@@ -62,6 +73,9 @@ public class CommunityService {
             "ILLEGAL_FILMING",
             "ETC"
     );
+
+    private static final DateTimeFormatter FILE_DATE_FORMATTER =
+            DateTimeFormatter.ofPattern("yyyyMMdd");
 
     @Transactional(readOnly = true)
     public List<CommunityPostResponseDto> getStockPosts(String symbol) {
@@ -158,7 +172,10 @@ public class CommunityService {
                 .build();
 
         Post savedPost = postRepository.save(post);
+
+        finalizeTempAttachments(savedPost, user);
         syncAttachments(savedPost, user, request.getAttachmentIds(), false);
+
         return savedPost.getId();
     }
 
@@ -320,6 +337,8 @@ public class CommunityService {
         }
 
         post.updatePost(request.getTitle().trim(), request.getContent().trim(), isNotice);
+
+        finalizeTempAttachments(post, loginUser);
         syncAttachments(post, loginUser, request.getAttachmentIds(), true);
     }
 
@@ -454,9 +473,9 @@ public class CommunityService {
         List<Long> normalizedIds = attachmentIds == null
                 ? List.of()
                 : attachmentIds.stream()
-                    .filter(id -> id != null)
-                    .distinct()
-                    .toList();
+                .filter(id -> id != null)
+                .distinct()
+                .toList();
 
         if (isUpdate) {
             List<PostAttachment> existingAttachments = postAttachmentRepository.findByPostIdOrderByCreatedAtAsc(post.getId());
@@ -490,6 +509,97 @@ public class CommunityService {
 
             attachment.assignToPost(post);
         }
+    }
+
+    private void finalizeTempAttachments(Post post, User user) {
+        List<PostAttachment> tempFiles = postAttachmentRepository
+                .findTempFilesByUser(user.getId())
+                .stream()
+                .filter(file -> "FILE".equals(file.getFileType()))
+                .toList();
+
+        if (tempFiles.isEmpty()) {
+            return;
+        }
+
+        int count = postAttachmentRepository.countByPostId(post.getId());
+
+        for (PostAttachment file : tempFiles) {
+            count++;
+
+            String extension = extractExtension(file.getStoredName());
+            String newName = createFinalFileName(user.getId(), post.getId(), count, extension);
+
+            Path rootPath = getUploadRootPath();
+            String subDir = extractSubDir(file.getFileUrl());
+
+            Path oldPath = rootPath.resolve(subDir).resolve(file.getStoredName()).normalize();
+            Path newPath = oldPath.getParent().resolve(newName).normalize();
+
+            try {
+                System.out.println("=== finalizeTempAttachments start ===");
+                System.out.println("oldPath = " + oldPath);
+                System.out.println("newPath = " + newPath);
+                System.out.println("oldPath exists = " + Files.exists(oldPath));
+                System.out.println("newPath exists = " + Files.exists(newPath));
+
+                if (!Files.exists(oldPath)) {
+                    throw new IllegalArgumentException("임시 파일을 찾을 수 없습니다: " + oldPath);
+                }
+
+                Files.createDirectories(newPath.getParent());
+                Files.copy(oldPath, newPath, StandardCopyOption.REPLACE_EXISTING);
+
+                try {
+                    Files.deleteIfExists(oldPath);
+                } catch (IOException deleteEx) {
+                    deleteEx.printStackTrace();
+                }
+
+                String newUrl = "/uploads/" + subDir.replace("\\", "/") + "/" + newName;
+                file.updateFileInfo(newName, newUrl, post);
+
+                System.out.println("=== finalizeTempAttachments success ===");
+            } catch (Exception e) {
+                e.printStackTrace();
+                throw new IllegalArgumentException(
+                        "파일 최종저장중 오류가 발생했습니다. oldPath=" + oldPath
+                                + ", newPath=" + newPath
+                                + ", reason=" + e.getMessage()
+                );
+            }
+        }
+    }
+
+    private String createFinalFileName(Long userId, Long postId, int count, String extension) {
+        String date = LocalDate.now().format(FILE_DATE_FORMATTER);
+        return date + "_" + userId + "_" + postId + "." + count + extension;
+    }
+
+    private String extractSubDir(String fileUrl) {
+        String path = fileUrl.replace("/uploads/", "");
+        int lastSlashIndex = path.lastIndexOf("/");
+        if (lastSlashIndex < 0) {
+            throw new IllegalArgumentException("잘못된 파일 경로입니다.");
+        }
+        return path.substring(0, lastSlashIndex);
+    }
+
+    private String extractExtension(String name) {
+        int idx = name.lastIndexOf(".");
+        return idx < 0 ? "" : name.substring(idx);
+    }
+
+    private Path getUploadRootPath() {
+        Path configuredPath = Paths.get(uploadDir);
+
+        if (configuredPath.isAbsolute()) {
+            return configuredPath;
+        }
+
+        return Paths.get(System.getProperty("user.dir"), uploadDir)
+                .toAbsolutePath()
+                .normalize();
     }
 
     private boolean hasBoughtStock(Long userId, Long stockId) {
