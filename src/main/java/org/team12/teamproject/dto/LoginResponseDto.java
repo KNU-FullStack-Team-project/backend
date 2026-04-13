@@ -15,6 +15,7 @@ public class LoginResponseDto {
     private String nickname;
     private String role;
     private String message;
-    private String token; // JWT 토큰 필드 추가
-    private Long accountId; // 계좌 ID 필드 추가
+    private String token;
+    private Long accountId;
+    private Boolean captchaRequired;
 }

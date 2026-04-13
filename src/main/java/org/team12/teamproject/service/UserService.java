@@ -6,20 +6,21 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
-import org.team12.teamproject.dto.ChangePasswordRequestDto;
+import org.team12.teamproject.dto.AdminUpdateUserRequestDto;
 import org.team12.teamproject.dto.ChangeNicknameRequestDto;
+import org.team12.teamproject.dto.ChangePasswordRequestDto;
 import org.team12.teamproject.dto.LoginRequestDto;
 import org.team12.teamproject.dto.LoginResponseDto;
 import org.team12.teamproject.dto.ResetPasswordRequestDto;
 import org.team12.teamproject.dto.SignupRequestDto;
-import org.team12.teamproject.dto.AdminUpdateUserRequestDto;
 import org.team12.teamproject.dto.UserProfileResponseDto;
 import org.team12.teamproject.dto.WithdrawUserRequestDto;
 import org.team12.teamproject.entity.Account;
 import org.team12.teamproject.entity.User;
-import org.team12.teamproject.security.JwtUtil;
+import org.team12.teamproject.exception.LoginFailedException;
 import org.team12.teamproject.repository.AccountRepository;
 import org.team12.teamproject.repository.UserRepository;
+import org.team12.teamproject.security.JwtUtil;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
@@ -30,10 +31,14 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 @RequiredArgsConstructor
 public class UserService {
+
+    private static final int CAPTCHA_THRESHOLD = 5;
 
     private final UserRepository userRepository;
     private final AccountRepository accountRepository;
@@ -41,6 +46,9 @@ public class UserService {
     private final PasswordEncoder passwordEncoder;
     private final JdbcTemplate jdbcTemplate;
     private final JwtUtil jwtUtil;
+    private final RecaptchaService recaptchaService;
+
+    private final Map<String, Integer> loginFailureCounts = new ConcurrentHashMap<>();
 
     @Transactional
     public String signup(SignupRequestDto dto) {
@@ -79,7 +87,6 @@ public class UserService {
             userRepository.save(existingUser);
 
             createDefaultAccount(existingUser);
-
             emailService.clearVerification(dto.getEmail());
 
             return "회원가입 완료";
@@ -105,10 +112,7 @@ public class UserService {
                 .build();
 
         userRepository.save(user);
-
-        // 회원가입 시 기본 계좌 생성 (1,000만원 시작)
         createDefaultAccount(user);
-
         emailService.clearVerification(dto.getEmail());
 
         return "회원가입 완료";
@@ -119,7 +123,7 @@ public class UserService {
                 .user(user)
                 .accountType("MAIN")
                 .accountName(user.getNickname() + "의 기본 계좌")
-                .cashBalance(new BigDecimal("5000000")) // 500만원
+                .cashBalance(new BigDecimal("5000000"))
                 .isActive(true)
                 .createdAt(LocalDateTime.now())
                 .updatedAt(LocalDateTime.now())
@@ -142,33 +146,38 @@ public class UserService {
 
     public LoginResponseDto login(LoginRequestDto dto) {
         String email = dto.getEmail() != null ? dto.getEmail().trim() : "";
+        String normalizedEmail = normalizeEmail(email);
+
+        if (isCaptchaRequired(normalizedEmail)) {
+            validateCaptcha(dto.getCaptchaToken());
+        }
+
         User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new RuntimeException("회원정보가 일치하지 않습니다."));
+                .orElseThrow(() -> buildLoginFailedException(normalizedEmail));
 
         if (!matchesPassword(dto.getPassword(), user.getPasswordHash())) {
-            throw new RuntimeException("회원정보가 일치하지 않습니다.");
+            throw buildLoginFailedException(normalizedEmail);
         }
 
         if ("QUIT".equalsIgnoreCase(user.getStatus())) {
-            throw new RuntimeException("회원정보가 일치하지 않습니다.");
+            throw buildLoginFailedException(normalizedEmail);
         }
 
         if ("SUSPENDED".equalsIgnoreCase(user.getStatus())) {
-            throw new RuntimeException("정지된 계정입니다.");
+            throw new LoginFailedException("정지된 계정입니다.", isCaptchaRequired(normalizedEmail));
         }
 
         if (!"ACTIVE".equalsIgnoreCase(user.getStatus())) {
-            throw new RuntimeException("비활성화된 계정입니다.");
+            throw new LoginFailedException("비활성화된 계정입니다.", isCaptchaRequired(normalizedEmail));
         }
+
+        clearLoginFailures(normalizedEmail);
 
         user.setLastLoginAt(LocalDateTime.now());
         user.setUpdatedAt(LocalDateTime.now());
         userRepository.save(user);
 
-        // 실제 JWT 생성
         String token = jwtUtil.generateToken(user.getEmail(), user.getRole());
-
-        // 사용자의 기본 계좌 ID 조회 (마이페이지 등에서 즉시 사용 위함)
         List<Account> accounts = accountRepository.findByUserId(user.getId());
         Long accountId = accounts.isEmpty() ? null : accounts.get(0).getId();
 
@@ -179,7 +188,9 @@ public class UserService {
                 user.getRole(),
                 "로그인 성공",
                 token,
-                accountId);
+                accountId,
+                false
+        );
     }
 
     public String checkEmail(String email) {
@@ -433,10 +444,58 @@ public class UserService {
         return hasLetter && hasDigit && hasSpecial;
     }
 
+    private LoginFailedException buildLoginFailedException(String normalizedEmail) {
+        int failCount = incrementLoginFailures(normalizedEmail);
+        boolean captchaRequired = failCount >= CAPTCHA_THRESHOLD;
+
+        if (captchaRequired) {
+            return new LoginFailedException("로그인 5회 이상 실패하여 reCAPTCHA 인증이 필요합니다.", true);
+        }
+
+        return new LoginFailedException("회원정보가 일치하지 않습니다.", false);
+    }
+
+    private void validateCaptcha(String captchaToken) {
+        if (captchaToken == null || captchaToken.isBlank()) {
+            throw new LoginFailedException("로그인 5회 이상 실패하여 reCAPTCHA 인증이 필요합니다.", true);
+        }
+
+        if (!recaptchaService.verify(captchaToken)) {
+            throw new LoginFailedException("reCAPTCHA 인증에 실패했습니다. 다시 시도해 주세요.", true);
+        }
+    }
+
+    private int incrementLoginFailures(String normalizedEmail) {
+        if (normalizedEmail == null || normalizedEmail.isBlank()) {
+            return CAPTCHA_THRESHOLD;
+        }
+
+        return loginFailureCounts.merge(normalizedEmail, 1, Integer::sum);
+    }
+
+    private void clearLoginFailures(String normalizedEmail) {
+        if (normalizedEmail == null || normalizedEmail.isBlank()) {
+            return;
+        }
+
+        loginFailureCounts.remove(normalizedEmail);
+    }
+
+    private boolean isCaptchaRequired(String normalizedEmail) {
+        if (normalizedEmail == null || normalizedEmail.isBlank()) {
+            return false;
+        }
+
+        return loginFailureCounts.getOrDefault(normalizedEmail, 0) >= CAPTCHA_THRESHOLD;
+    }
+
+    private String normalizeEmail(String email) {
+        return email == null ? "" : email.trim().toLowerCase();
+    }
+
     private UserProfileResponseDto toUserProfile(User user) {
         List<Account> accounts = accountRepository.findByUserId(user.getId());
 
-        // 계좌가 없는 기존 유저 등을 위한 자동 생성 로직
         if (accounts.isEmpty()) {
             createDefaultAccount(user);
             accounts = accountRepository.findByUserId(user.getId());
@@ -483,5 +542,4 @@ public class UserService {
                 .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다."));
         return jwtUtil.generateToken(user.getEmail(), user.getRole());
     }
-
 }

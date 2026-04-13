@@ -1,13 +1,28 @@
 package org.team12.teamproject.controller;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
-import org.team12.teamproject.dto.*;
+import org.team12.teamproject.dto.ChangeNicknameRequestDto;
+import org.team12.teamproject.dto.ChangePasswordRequestDto;
+import org.team12.teamproject.dto.LoginRequestDto;
+import org.team12.teamproject.dto.LoginResponseDto;
+import org.team12.teamproject.dto.ResetPasswordRequestDto;
+import org.team12.teamproject.dto.SignupRequestDto;
+import org.team12.teamproject.dto.UserProfileResponseDto;
+import org.team12.teamproject.dto.WithdrawUserRequestDto;
+import org.team12.teamproject.exception.LoginFailedException;
+import org.team12.teamproject.service.UserService;
 
 import java.util.Map;
-import org.team12.teamproject.service.UserService;
 
 @RestController
 @RequestMapping("/users")
@@ -28,15 +43,31 @@ public class UserController {
 
     @PostMapping("/login")
     public ResponseEntity<LoginResponseDto> login(@RequestBody LoginRequestDto loginRequestDto) {
-        LoginResponseDto response = userService.login(loginRequestDto);
-        return ResponseEntity.ok(response);
+        try {
+            LoginResponseDto response = userService.login(loginRequestDto);
+            return ResponseEntity.ok(response);
+        } catch (LoginFailedException e) {
+            LoginResponseDto response = new LoginResponseDto(
+                    null,
+                    null,
+                    null,
+                    null,
+                    e.getMessage(),
+                    null,
+                    null,
+                    e.isCaptchaRequired()
+            );
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(response);
+        }
     }
 
     @PostMapping("/refresh")
     public ResponseEntity<String> refresh(@RequestBody Map<String, String> body) {
         try {
             String email = body.get("email");
-            if (email == null || email.trim().isEmpty()) return ResponseEntity.badRequest().body("Email is required");
+            if (email == null || email.trim().isEmpty()) {
+                return ResponseEntity.badRequest().body("Email is required");
+            }
             String newToken = userService.refreshToken(email);
             return ResponseEntity.ok(newToken);
         } catch (Exception e) {
