@@ -62,16 +62,16 @@ public class UserController {
     }
 
     @PostMapping("/refresh")
-    public ResponseEntity<String> refresh(@RequestBody Map<String, String> body) {
+    public ResponseEntity<Map<String, String>> refresh(@RequestBody Map<String, String> body) {
         try {
             String email = body.get("email");
             if (email == null || email.trim().isEmpty()) {
-                return ResponseEntity.badRequest().body("Email is required");
+                return ResponseEntity.badRequest().body(Map.of("message", "Email is required"));
             }
             String newToken = userService.refreshToken(email);
-            return ResponseEntity.ok(newToken);
+            return ResponseEntity.ok(Map.of("token", newToken));
         } catch (Exception e) {
-            return ResponseEntity.status(401).body("Refresh failed: " + e.getMessage());
+            return ResponseEntity.status(401).body(Map.of("message", "Refresh failed: " + e.getMessage()));
         }
     }
 

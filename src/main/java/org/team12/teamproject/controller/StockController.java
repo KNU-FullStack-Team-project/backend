@@ -1,5 +1,6 @@
 package org.team12.teamproject.controller;
 
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.team12.teamproject.dto.PageResponseDto;
@@ -48,7 +49,10 @@ public class StockController {
             @PathVariable(name = "symbol") String symbol,
             @RequestParam(name = "period", defaultValue = "1M") String period
     ) {
-        return ResponseEntity.ok(stockService.getStockHistory(symbol, period));
+        // [최적화] 브라우저 수준에서 1분간 해당 요청을 캐시하도록 설정
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CACHE_CONTROL, "max-age=60")
+                .body(stockService.getStockHistory(symbol, period));
     }
 
     // =========================================================

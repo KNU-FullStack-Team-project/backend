@@ -36,29 +36,32 @@ public class KisMasterSyncService {
     /**
      * 서버 시작 시 한 번 실행하여 전 종목을 초기화 / 업데이트 합니다.
      * ApplicationReadyEvent를 사용하여 다른 빈들이 모두 준비된 후 안전하게 실행합니다.
+     * [최적화] 거대 트랜잭션을 방지하기 위해 @Transactional 제거
      */
     @EventListener(ApplicationReadyEvent.class)
-    @Transactional
     public void syncOnStartup() {
-        log.info(">>> [Startup] KIS 전 종목(KOSPI/KOSDAQ) 동기화를 시작합니다.");
-        try {
-            syncMarket(KOSPI_URL, "KOSPI");
-            syncMarket(KOSDAQ_URL, "KOSDAQ");
-            
-            // 신규: 필터링 대상 기존 종목 완전 삭제 실행
-            cleanupIrrelevantStocks();
-            
-            log.info(">>> [Startup] KIS 전 종목 동기화 및 정제 완료!");
-        } catch (Exception e) {
-            log.error(">>> [Startup] 동기화 중 오류 발생: {}", e.getMessage(), e);
-        }
+        // [최적화] 서버 시작 시 동기화 작업을 별도 스레드에서 실행하여 Tomcat 스레드 차단 방지
+        new Thread(() -> {
+            log.info(">>> [Startup] KIS 전 종목(KOSPI/KOSDAQ) 동기화를 백그라운드에서 시작합니다.");
+            try {
+                syncMarket(KOSPI_URL, "KOSPI");
+                syncMarket(KOSDAQ_URL, "KOSDAQ");
+
+                // 신규: 필터링 대상 기존 종목 완전 삭제 실행
+                cleanupIrrelevantStocks();
+
+                log.info(">>> [Startup] KIS 전 종목 동기화 및 정제 완료!");
+            } catch (Exception e) {
+                log.error(">>> [Startup] 동기화 중 오류 발생: {}", e.getMessage(), e);
+            }
+        }).start();
     }
 
-    /**
+    /* 
      * 매일 오전 8시(시장 개장 전) 정기 업데이트 스케줄러
+     * [최적화] 거대 트랜잭션을 방지하기 위해 @Transactional 제거
      */
     @Scheduled(cron = "0 0 8 * * ?")
-    @Transactional
     public void syncDaily() {
         log.info(">>> [Scheduled] KIS 일일 전 종목 동기화를 시작합니다.");
         try {
@@ -75,8 +78,9 @@ public class KisMasterSyncService {
         
         // 기존 DB에 저장된 주식 목록 해시맵 구성 (빠른 검색용)
         Map<String, Stock> existingStocks = stockRepository.findAll().stream()
-                .collect(Collectors.toMap(Stock::getStockCode, Function.identity(), (v1, v2) -> v1)); // 중복 예방
+                .collect(Collectors.toMap(Stock::getStockCode, Function.identity(), (existing, replacement) -> existing));
 
+        
         List<Stock> newStocks = new ArrayList<>();
         List<Stock> updatedStocks = new ArrayList<>();
         int insertCount = 0;
@@ -91,11 +95,12 @@ public class KisMasterSyncService {
                 
                 while ((line = br.readLine()) != null) {
                     byte[] bytes = line.getBytes("MS949");
-                    
+
                     if (bytes.length < 61) {
                         continue; // 비정상 라인 무시
                     }
 
+                    
                     // KIS 마스터 기준: 0~9 단축코드, 9~21 표준코드, 21~61 한글명, 76 시장구분
                     String shortCode = new String(bytes, 0, 9, "MS949").trim();
                     String stockName = new String(bytes, 21, 40, "MS949").trim();
@@ -132,10 +137,11 @@ public class KisMasterSyncService {
                         }
                     }
                     
-                    // 대량 배치 처리를 위함 방지 차원 (필요 시 조정)
-                    if (newStocks.size() >= 1000) {
+                    // 대량 배치 처리를 위한 저장 (부하 분산을 위해 배치 사이즈 하향 및 지연 시간 추가)
+                    if (newStocks.size() >= 200) {
                         stockRepository.saveAll(newStocks);
                         newStocks.clear();
+                        try { Thread.sleep(50); } catch (InterruptedException ignored) {}
                     }
                 }
             }
@@ -145,7 +151,7 @@ public class KisMasterSyncService {
         if (!newStocks.isEmpty()) {
             stockRepository.saveAll(newStocks);
         }
-        
+
         if (!updatedStocks.isEmpty()) {
             stockRepository.saveAll(updatedStocks);
         }
@@ -158,26 +164,25 @@ public class KisMasterSyncService {
         
         String upperName = name.toUpperCase();
 
-        // 1. 종목코드가 '5'로 시작하는 경우 (파생 상품 등)
+        // 1. 단축코드가 '5'로 시작하는 경우 (일반적으로 수익증권 등)
         if (code != null && code.startsWith("5")) return true;
         
         // 2. 시장구분 코드가 '1'(주식)이 아닌 경우
         if (marketDivCode != ' ' && marketDivCode != '1') return true;
 
         // 3. 펀드/리츠/수익증권/ETN 클래스 패턴 및 키워드 필터링
-        // 스크린샷 기반 추가: 부동산, 오피스, 물류, 하이일드, 파생형, Class, 종류, 공모주, 인프라
         if (upperName.contains("부동산") || 
             upperName.contains("오피스") || 
             upperName.contains("물류") || 
-            upperName.contains("하이일드") || 
+            upperName.contains("하이일드") ||
             upperName.contains("파생") || 
-            upperName.contains("CLASS") || 
+            upperName.contains("CLASS") ||
             upperName.contains("종류") || 
-            upperName.contains("공모주") || 
+            upperName.contains("공모주") ||
             upperName.contains("인프라") ||
-            upperName.contains("핵심성장") || 
-            upperName.contains("혁신산업") || 
-            upperName.contains("포커스") || 
+            upperName.contains("핵심성장") ||
+            upperName.contains("혁신산업") ||
+            upperName.contains("포커스") ||
             upperName.contains("액티브") || 
             upperName.contains("채권") ||
             upperName.contains("그로쓰") ||
@@ -185,7 +190,8 @@ public class KisMasterSyncService {
             upperName.contains("밸류")) {
             return true;
         }
-
+                
+                
         // 4. 명칭 끝에 붙는 클래스 구분자 ( A, C, Ae, C-I 등) 및 괄호 패턴
         // 괄호 안에 영문이 들어간 명칭이나, 공백 뒤에 영문 클래스가 붙는 경우 제외
         if (upperName.matches(".*[\\(\\s][A-Z,a-z].*")) {
@@ -201,10 +207,12 @@ public class KisMasterSyncService {
                name.contains("넥스트웨이브") || 
                name.matches(".*제\\d+호.*");
     }
-
+                
+                
     /**
      * DB에 남아있는 불필요 종목들을 완전히 삭제합니다.
      */
+
     @Transactional
     public void cleanupIrrelevantStocks() {
         log.info(">>> [Cleanup] 불필요 종목(스팩, 코드'5', 비주식 등) 데이터 정리 시작...");
@@ -213,6 +221,7 @@ public class KisMasterSyncService {
         
         List<Stock> toDelete = allStocks.stream()
                 .filter(s -> {
+                    // marketDivCode를 알 수 없으므로 ' '로 전달 (이름과 코드로만 필터링)
                     boolean skip = shouldSkipStock(s.getStockName(), s.getStockCode(), ' ');
                     if (skip) {
                         log.info(">>> [Cleanup] 삭제 대상 감지: {} ({})", s.getStockName(), s.getStockCode());
