@@ -45,16 +45,31 @@ public class OrderService {
     @Transactional
     public Order placeMarketBuyOrder(Long accountId, String stockCode, Long quantity, String requestId) {
         checkIdempotency(requestId);
+        validateStockCode(stockCode);
         Account account = accountRepository.findById(accountId)
                 .orElseThrow(() -> new IllegalArgumentException("Account not found"));
-        Stock stock = stockRepository.findByStockCode(stockCode)
-                .orElseThrow(() -> new IllegalArgumentException("Stock not found"));
+        Stock stock = stockService.getOrRegisterStock(stockCode);
 
-        String currentPriceStr = stockService.getStockDetail(stockCode).getCurrentPrice();
+        StockResponseDto stockDetail = stockService.getStockDetail(stockCode);
+        String currentPriceStr = stockDetail.getCurrentPrice();
+        
+        // 실시간 현재가가 없거나 "0"인 경우 (장마감 후 등), 기준가(전일 종가)를 fallback으로 사용
+        if (currentPriceStr == null || "null".equals(currentPriceStr) || "0".equals(currentPriceStr) || currentPriceStr.trim().isEmpty()) {
+            log.info("[OrderService] 현재가를 불러올 수 없어 기준가(전일 종가)를 사용합니다. 종목: {}", stockCode);
+            currentPriceStr = stockDetail.getBasePrice();
+        }
+
+        if (currentPriceStr == null || "null".equals(currentPriceStr) || "0".equals(currentPriceStr) || currentPriceStr.trim().isEmpty()) {
+            throw new IllegalArgumentException("해당 종목의 가격 정보를 외부(KIS)에서 불러오지 못하여 매수할 수 없습니다.");
+        }
+
         BigDecimal currentPrice = new BigDecimal(currentPriceStr);
         BigDecimal totalAmount = currentPrice.multiply(BigDecimal.valueOf(quantity));
 
         account.deductBalance(totalAmount);
+        
+        // stock을 DB에 확실히 반영하여 외래키 제약 오류(ORA-02291) 방지
+        stockRepository.saveAndFlush(stock);
 
         Order order = Order.builder()
                 .account(account)
@@ -67,7 +82,8 @@ public class OrderService {
                 .orderStatus("QUEUED")
                 .orderedAt(LocalDateTime.now())
                 .build();
-        orderRepository.save(order);
+        
+        orderRepository.saveAndFlush(order);
 
         // 시장가 주문은 큐를 거치지 않고 즉시 체결 처리
         processOrder("MARKET_BUY:" + order.getId());
@@ -78,10 +94,10 @@ public class OrderService {
     @Transactional
     public Order placeMarketSellOrder(Long accountId, String stockCode, Long quantity, String requestId) {
         checkIdempotency(requestId);
+        validateStockCode(stockCode);
         Account account = accountRepository.findById(accountId)
                 .orElseThrow(() -> new IllegalArgumentException("Account not found"));
-        Stock stock = stockRepository.findByStockCode(stockCode)
-                .orElseThrow(() -> new IllegalArgumentException("Stock not found"));
+        Stock stock = stockService.getOrRegisterStock(stockCode);
 
         Holding holding = holdingRepository.findByAccountIdAndStockId(accountId, stock.getId())
                 .orElseThrow(() -> new IllegalArgumentException("보유 중인 주식이 없습니다."));
@@ -90,7 +106,19 @@ public class OrderService {
             throw new IllegalArgumentException("보유 수량이 부족합니다.");
         }
 
-        String currentPriceStr = stockService.getStockDetail(stockCode).getCurrentPrice();
+        StockResponseDto stockDetail = stockService.getStockDetail(stockCode);
+        String currentPriceStr = stockDetail.getCurrentPrice();
+
+        // 실시간 현재가가 없거나 "0"인 경우, 기준가(전일 종가)를 fallback으로 사용
+        if (currentPriceStr == null || "null".equals(currentPriceStr) || "0".equals(currentPriceStr) || currentPriceStr.trim().isEmpty()) {
+            log.info("[OrderService] 현재가를 불러올 수 없어 기준가(전일 종가)를 사용합니다. 종목: {}", stockCode);
+            currentPriceStr = stockDetail.getBasePrice();
+        }
+
+        if (currentPriceStr == null || "null".equals(currentPriceStr) || "0".equals(currentPriceStr) || currentPriceStr.trim().isEmpty()) {
+            throw new IllegalArgumentException("해당 종목의 가격 정보를 외부(KIS)에서 불러오지 못하여 매도할 수 없습니다.");
+        }
+
         BigDecimal currentPrice = new BigDecimal(currentPriceStr);
 
         Order order = Order.builder()
@@ -115,19 +143,23 @@ public class OrderService {
     @Transactional
     public Order placeLimitBuyOrder(Long accountId, String stockCode, Long quantity, BigDecimal limitPrice, String requestId) {
         checkIdempotency(requestId);
-
+        validateStockCode(stockCode);
+        
         // 주식 시장 운영 시간 검증 활성화
-        if (!MarketUtils.isMarketOpen()) {
-            throw new IllegalStateException("주식 시장 운영 시간(평일 09:00 ~ 15:30)에만 주문이 가능합니다.");
-        }
+        // if (!MarketUtils.isMarketOpen()) {
+        //     throw new IllegalStateException("주식 시장 운영 시간(평일 09:00 ~ 15:30)에만 주문이 가능합니다.");
+        // }
 
         Account account = accountRepository.findById(accountId)
                 .orElseThrow(() -> new IllegalArgumentException("Account not found"));
-        Stock stock = stockRepository.findByStockCode(stockCode)
-                .orElseThrow(() -> new IllegalArgumentException("Stock not found"));
+        Stock stock = stockService.getOrRegisterStock(stockCode);
 
         StockResponseDto stockDetail = stockService.getStockDetail(stockCode);
-        BigDecimal currentPrice = new BigDecimal(stockDetail.getCurrentPrice());
+        String currentPriceStr = stockDetail.getCurrentPrice();
+        if (currentPriceStr == null || "null".equals(currentPriceStr)) {
+            throw new IllegalArgumentException("해당 종목의 가격 정보를 불러오지 못하여 매수할 수 없습니다.");
+        }
+        BigDecimal currentPrice = new BigDecimal(currentPriceStr);
         BigDecimal basePrice = (stockDetail.getBasePrice() != null && !stockDetail.getBasePrice().isEmpty()) 
                 ? new BigDecimal(stockDetail.getBasePrice()) 
                 : currentPrice;
@@ -164,16 +196,16 @@ public class OrderService {
     @Transactional
     public Order placeLimitSellOrder(Long accountId, String stockCode, Long quantity, BigDecimal limitPrice, String requestId) {
         checkIdempotency(requestId);
+        validateStockCode(stockCode);
 
         // 주식 시장 운영 시간 검증 활성화
-        if (!MarketUtils.isMarketOpen()) {
-            throw new IllegalStateException("주식 시장 운영 시간(평일 09:00 ~ 15:30)에만 주문이 가능합니다.");
-        }
+        // if (!MarketUtils.isMarketOpen()) {
+        //     throw new IllegalStateException("주식 시장 운영 시간(평일 09:00 ~ 15:30)에만 주문이 가능합니다.");
+        // }
 
         Account account = accountRepository.findById(accountId)
                 .orElseThrow(() -> new IllegalArgumentException("Account not found"));
-        Stock stock = stockRepository.findByStockCode(stockCode)
-                .orElseThrow(() -> new IllegalArgumentException("Stock not found"));
+        Stock stock = stockService.getOrRegisterStock(stockCode);
 
         Holding holding = holdingRepository.findByAccountIdAndStockId(accountId, stock.getId())
                 .orElseThrow(() -> new IllegalArgumentException("보유 중인 주식이 없습니다."));
@@ -183,7 +215,11 @@ public class OrderService {
         }
 
         StockResponseDto stockDetail = stockService.getStockDetail(stockCode);
-        BigDecimal currentPrice = new BigDecimal(stockDetail.getCurrentPrice());
+        String currentPriceStr = stockDetail.getCurrentPrice();
+        if (currentPriceStr == null || "null".equals(currentPriceStr)) {
+            throw new IllegalArgumentException("해당 종목의 가격 정보를 불러오지 못하여 매도할 수 없습니다.");
+        }
+        BigDecimal currentPrice = new BigDecimal(currentPriceStr);
         BigDecimal basePrice = (stockDetail.getBasePrice() != null && !stockDetail.getBasePrice().isEmpty()) 
                 ? new BigDecimal(stockDetail.getBasePrice()) 
                 : currentPrice;
@@ -366,6 +402,12 @@ public class OrderService {
         Boolean isFirstRequest = redisTemplate.opsForValue().setIfAbsent(lockKey, "processed", Duration.ofSeconds(20));
         if (Boolean.FALSE.equals(isFirstRequest)) {
             throw new IllegalStateException("이미 처리 중이거나 완료된 주문 요청입니다. (중복 방지)");
+        }
+    }
+
+    private void validateStockCode(String stockCode) {
+        if (stockCode == null || stockCode.length() != 6 || !stockCode.matches("\\d{6}")) {
+            throw new IllegalArgumentException("올바르지 않은 종목 코드 형식입니다. 국내 주식은 6자리 숫자여야 합니다. (입력값: " + stockCode + ")");
         }
     }
 }

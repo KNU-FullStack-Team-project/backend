@@ -8,7 +8,7 @@ import java.time.LocalDateTime;
 import java.util.Objects;
 
 @Entity
-@Table(name = "stock")
+@Table(name = "stocks")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Stock implements Serializable {
@@ -47,6 +47,12 @@ public class Stock implements Serializable {
     public void updateName(String newName) {
         if (newName != null && !newName.trim().isEmpty()) {
             this.stockName = newName.trim();
+        }
+    }
+
+    public void updateMarketType(String newType) {
+        if (newType != null && !newType.trim().isEmpty()) {
+            this.marketType = newType.trim();
         }
     }
 

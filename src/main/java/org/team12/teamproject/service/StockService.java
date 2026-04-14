@@ -159,11 +159,13 @@ public class StockService {
      * 주식 목록 조회 (페이징)
      */
     public PageResponseDto<StockResponseDto> getStockList(int page, int size) {
-        int lower = (page - 1) * size;
-        int upper = page * size;
+        // 프론트엔드에서 0 또는 1로 보낼 수 있으므로 안전하게 처리 (0-indexed 기준 지원)
+        int effectivePage = (page <= 0) ? 1 : page;
+        int lower = (effectivePage - 1) * size;
+        int upper = effectivePage * size;
 
         List<Stock> stockList = stockRepository.findStocksNative(lower, upper);
-        long totalElements = stockRepository.count();
+        long totalElements = stockRepository.countValidStocks();
         int totalPages = (int) Math.ceil((double) totalElements / size);
 
         List<StockResponseDto> content = new ArrayList<>();
@@ -325,18 +327,51 @@ public class StockService {
             throw new RuntimeException("종목 데이터를 불러올 수 없습니다.");
         }
 
+        // DB에 잘못 저장된 종목명 교정 로직 (유한양행 vs 한국전력 혼선 방지)
+        if ("000100".equals(stockCode) && !"\uC720\uD55C\uC591\uD589".equals(dto.getName())) {
+             stockRepository.findByStockCode("000100").ifPresent(s -> {
+                 s.updateName("\uC720\uD55C\uC591\uD589"); // 유한양행
+                 stockRepository.save(s);
+             });
+        } else if ("015760".equals(stockCode) && !"\uD55C\uAD6D\uC804\uB825\uACF5\uC0AC".equals(dto.getName())) {
+             stockRepository.findByStockCode("015760").ifPresent(s -> {
+                 s.updateName("\uD55C\uAD6D\uC804\uB825\uACF5\uC0AC"); // 한국전력공사
+                 stockRepository.save(s);
+             });
+        }
+
         try {
+            String cp = dto.getCurrentPrice();
+            String bp = dto.getBasePrice();
+            
+            // 현재가가 없거나 0인 경우 (장마감 후 등), 기준가(전일 종가)를 fallback으로 사용
+            if (cp == null || cp.isEmpty() || "0".equals(cp) || "null".equals(cp)) {
+                if (bp != null && !bp.isEmpty() && !"0".equals(bp) && !"null".equals(bp)) {
+                    cp = bp;
+                    log.info("[StockService] 현재가 부재로 기준가 사용: {} -> {}", stockCode, cp);
+                } else {
+                    log.warn("[StockService] 현재가와 기준가가 모두 없습니다. 종목: {}", stockCode);
+                    // 1000원 대체 로직 제거: cp는 그대로 0 또는 null로 유지되어 주문 서비스에서 차단됨
+                }
+            }
+
             String value = String.format("%s:%s:%s:%s:%s",
-                    dto.getCurrentPrice(),
-                    dto.getChangeAmount(),
-                    dto.getChangeRate(),
-                    dto.getVolume(),
-                    dto.getBasePrice());
+                    cp != null ? cp : "0",
+                    dto.getChangeAmount() != null ? dto.getChangeAmount() : "0",
+                    dto.getChangeRate() != null ? dto.getChangeRate() : "0",
+                    dto.getVolume() != null ? dto.getVolume() : "0",
+                    bp != null && !bp.isEmpty() ? bp : (cp != null ? cp : "0"));
 
             redisTemplate.opsForValue().set(cacheKey, value, Duration.ofSeconds(60));
             
-            // 가격 업데이트 이벤트 발행
-            eventPublisher.publishEvent(new PriceUpdateEvent(this, stockCode, new BigDecimal(dto.getCurrentPrice())));
+            // 가격 업데이트 이벤트 발행 (유효한 숫자일 때만)
+            if (cp != null && !cp.isEmpty() && !"0".equals(cp) && !"null".equals(cp)) {
+                try {
+                    eventPublisher.publishEvent(new PriceUpdateEvent(this, stockCode, new BigDecimal(cp)));
+                } catch (Exception ex) {
+                    log.warn("이벤트 발행을 위한 숫자 변환 실패 ({}): {}", cp, ex.getMessage());
+                }
+            }
         } catch (Exception e) {
             log.warn("Redis 저장 또는 이벤트 발행 실패: {}", e.getMessage());
         }
@@ -637,20 +672,29 @@ public class StockService {
                         .volume((String) output.get("acml_vol"))
                         .basePrice((String) output.get("stck_sdpr"))
                         .build();
-            } else {
-                log.warn("KIS API 응답에 output 데이터가 없습니다: {}", response.getBody());
             }
-
-            return null;
-
         } catch (org.springframework.web.client.HttpClientErrorException.Unauthorized e) {
             log.warn("KIS 토큰 만료 또는 무효(401). 토큰 재발급 후 재시도합니다.");
             clearTokenCache();
             return fetchPriceFromKisApi(stockCode);
         } catch (Exception e) {
-            log.error("API 호출 에러: {}, 상세: {}", e.getMessage(), e.toString());
-            return null;
+            log.error("KIS API 호출 중 오류 발생: {}", e.getMessage());
         }
+
+        // API 호출 실패 시 최소한의 정보를 담은 DTO 반환
+        String stockName = stockRepository.findByStockCode(stockCode)
+                .map(Stock::getStockName)
+                .orElse("이름없음");
+
+        return StockResponseDto.builder()
+                .symbol(stockCode)
+                .name(stockName)
+                .currentPrice("0")
+                .changeAmount("0")
+                .changeRate("0")
+                .volume("0")
+                .basePrice("0")
+                .build();
     }
 
     /**
@@ -706,5 +750,28 @@ public class StockService {
                 log.warn("Redis에 토큰 저장 실패: {}", e.getMessage());
             }
         }
+    }
+
+    @org.springframework.transaction.annotation.Transactional
+    public Stock getOrRegisterStock(String stockCode) {
+        Stock stock = stockRepository.findByStockCode(stockCode)
+                .orElseGet(() -> {
+                    log.info("DB에 없는 주식 조회/주문 시도. DB에 동적 강제 등록합니다. (코드: {})", stockCode);
+                    Stock newStock = Stock.builder()
+                            .stockCode(stockCode)
+                            .stockName("동적등록종목_" + stockCode)
+                            .marketType("KOSPI") // UNKNOWN 대신 KOSPI로 기본 설정하여 필터링 우회
+                            .isActive(true)
+                            .createdAt(LocalDateTime.now())
+                            .build();
+                    return stockRepository.saveAndFlush(newStock);
+                });
+        
+        // 만약 기존에 UNKNOWN으로 등록되어 있었다면 KOSPI로 업데이트 (필터링 방지)
+        if ("UNKNOWN".equals(stock.getMarketType())) {
+             stock.updateMarketType("KOSPI");
+             return stockRepository.saveAndFlush(stock);
+        }
+        return stock;
     }
 }

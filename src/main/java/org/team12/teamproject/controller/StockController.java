@@ -71,4 +71,5 @@ public class StockController {
         stockService.refreshToken();
         return ResponseEntity.ok("KIS Access Token refreshed and saved to Redis.");
     }
+
 }

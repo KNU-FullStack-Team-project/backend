@@ -17,7 +17,7 @@ import org.team12.teamproject.service.OrderService;
         "http://localhost:3000"
 })
 public class OrderController {
-
+    
     private final OrderService orderService;
 
     @PostMapping
@@ -43,7 +43,8 @@ public class OrderController {
             return ResponseEntity.ok().body("주문이 성공적으로 접수되었습니다.");
             
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.badRequest().body(e.getMessage() != null ? e.getMessage() : "시스템 오류가 발생했습니다.");
         }
     }
 
