@@ -22,8 +22,12 @@ public class AccountController {
     private final AccountService accountService;
 
     @GetMapping("/my/dashboard")
-    public ResponseEntity<AccountDashboardDto> getMyDashboard(@RequestParam String email) {
-        Long accountId = accountService.getAccountIdByEmail(email);
+    public ResponseEntity<AccountDashboardDto> getMyDashboard(
+            @RequestParam String email,
+            @RequestParam(required = false) Long accountId) {
+        if (accountId == null) {
+            accountId = accountService.getAccountIdByEmail(email);
+        }
         AccountDashboardDto dto = accountService.getDashboard(accountId);
         return ResponseEntity.ok(dto);
     }
