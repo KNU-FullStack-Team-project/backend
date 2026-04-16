@@ -219,7 +219,7 @@ CREATE TABLE inquiries (
 	user_id	NUMBER		NOT NULL,
 	category	VARCHAR2(50)		NOT NULL,
 	title	VARCHAR2(200)		NOT NULL,
-	content	VARCHAR2(200)		NOT NULL,
+	content	VARCHAR2(2000)		NOT NULL,
 	inquiry_status	VARCHAR2(20)	DEFAULT 'OPEN'	NOT NULL,
 	created_at	DATE		NOT NULL,
 	updated_at	DATE		NOT NULL
