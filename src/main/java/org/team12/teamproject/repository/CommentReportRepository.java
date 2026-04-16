@@ -5,4 +5,5 @@ import org.team12.teamproject.entity.CommentReport;
 
 public interface CommentReportRepository extends JpaRepository<CommentReport, Long> {
     boolean existsByCommentIdAndReporterUserId(Long commentId, Long reporterUserId);
+    java.util.List<CommentReport> findAllByOrderByCreatedAtDesc();
 }
