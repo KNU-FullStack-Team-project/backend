@@ -164,48 +164,35 @@ public class KisMasterSyncService {
         
         String upperName = name.toUpperCase();
 
-        // 1. 단축코드가 '5'로 시작하는 경우 (일반적으로 수익증권 등)
+        // 1. 단축코드가 '5'로 시작하는 경우 (일반적으로 ETN 등)
         if (code != null && code.startsWith("5")) return true;
         
-        // 2. 시장구분 코드가 '1'(주식)이 아닌 경우
-        if (marketDivCode != ' ' && marketDivCode != '1') return true;
+        // 2. 시장구분 코드 체크는 KOSDAQ 종목(예: 'N')이 필터링되는 문제가 있어 제거합니다.
 
-        // 3. 펀드/리츠/수익증권/ETN 클래스 패턴 및 키워드 필터링
-        if (upperName.contains("부동산") || 
-            upperName.contains("오피스") || 
-            upperName.contains("물류") || 
-            upperName.contains("하이일드") ||
-            upperName.contains("파생") || 
-            upperName.contains("CLASS") ||
-            upperName.contains("종류") || 
+        // 3. 스팩(SPAC), ETN, ETF, 펀드 및 기타 필터
+        if (upperName.contains("스팩") || 
+            upperName.contains("기업인수목적") || 
+            upperName.contains("넥스트웨이브") || 
+            upperName.matches(".*제\\d+호.*") ||
+            upperName.contains("ETN") ||
+            upperName.contains("ETF") ||
+            upperName.contains("KODEX") ||
+            upperName.contains("TIGER") ||
+            upperName.contains("KBSTAR") ||
+            upperName.contains("ARIRANG") ||
+            upperName.contains("HANARO") ||
+            upperName.contains("KOSEF") ||
+            upperName.contains("ACE") ||
+            upperName.contains("SOL") ||
+            upperName.contains("TIMEFOLIO") ||
             upperName.contains("공모주") ||
-            upperName.contains("인프라") ||
-            upperName.contains("핵심성장") ||
-            upperName.contains("혁신산업") ||
-            upperName.contains("포커스") ||
-            upperName.contains("액티브") || 
-            upperName.contains("채권") ||
-            upperName.contains("그로쓰") ||
-            upperName.contains("인덱스") ||
-            upperName.contains("밸류")) {
+            upperName.contains("하이일드")) {
             return true;
         }
-                
-                
-        // 4. 명칭 끝에 붙는 클래스 구분자 ( A, C, Ae, C-I 등) 및 괄호 패턴
-        // 괄호 안에 영문이 들어간 명칭이나, 공백 뒤에 영문 클래스가 붙는 경우 제외
-        if (upperName.matches(".*[\\(\\s][A-Z,a-z].*")) {
-            // (우), (주), (전환) 등은 주식이므로 제외 로직
-            if (!upperName.contains("(우)") && !upperName.contains("(주)") && !upperName.contains("(전환)")) {
-                return true; 
-            }
-        }
 
-        // 5. 스팩(SPAC) 및 기타 필터
-        return name.contains("스팩") || 
-               name.contains("기업인수목적") || 
-               name.contains("넥스트웨이브") || 
-               name.matches(".*제\\d+호.*");
+        // 영문 포함 정규식 필터는 'CJ ENM' 같은 정상 종목을 날려버리므로 제거합니다.
+
+        return false;
     }
                 
                 
