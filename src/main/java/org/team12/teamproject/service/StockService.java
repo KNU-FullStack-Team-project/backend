@@ -98,7 +98,8 @@ public class StockService {
 
                     // Rate Limit 적용 후 통신
                     StockResponseDto latest = fetchPriceFromKisApi(task.symbol);
-                    if (latest != null) {
+                    // [수정] API 호출 결과가 유효할 때만 저장 및 전파 (0원 오염 방지)
+                    if (latest != null && latest.getCurrentPrice() != null && !"0".equals(latest.getCurrentPrice())) {
                         saveToRedis(latest);
                         // DB의 volume 필드도 즉시 동기화 (필터링 및 정렬용)
                         try {
@@ -111,6 +112,8 @@ public class StockService {
                         if (task.priority <= 2) {
                             eventPublisher.publishEvent(new PriceUpdateEvent(this, task.symbol, new BigDecimal(latest.getCurrentPrice())));
                         }
+                    } else {
+                        log.debug("정상적인 시세 데이터를 가져오지 못함 ({}). 기존 데이터를 유지합니다.", task.symbol);
                     }
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
@@ -740,11 +743,13 @@ public class StockService {
         try {
             ensureAccessToken();
 
+            // [최적화] 시장 구분 코드 처리 (기본: J)
+            String marketDiv = "J"; 
+            
             String url = apiUrl
-                    + "/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD="
-                    + stockCode;
-            log.info("KIS API 요청 URL: {}", url);
-
+                    + "/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=" + marketDiv 
+                    + "&FID_INPUT_ISCD=" + stockCode;
+            
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             headers.set("authorization", "Bearer " + cachedAccessToken);
@@ -757,47 +762,40 @@ public class StockService {
             enforceApiRateLimit();
             ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
             
-            log.info("KIS API 응답: {}", response.getBody());
+            Map<String, Object> body = response.getBody();
+            if (body != null && "0".equals(String.valueOf(body.get("rt_cd")))) {
+                Map<String, Object> output = (Map<String, Object>) body.get("output");
+                if (output != null) {
+                    String currentPrice = (String) output.get("stck_prpr");
+                    
+                    if (currentPrice != null) {
+                        String stockName = stockRepository.findByStockCode(stockCode)
+                                .map(Stock::getStockName)
+                                .orElse("\uC774\uB984\uC5C6\uC74C");
 
-            if (response.getBody() != null && response.getBody().containsKey("output")) {
-                Map<String, Object> output = (Map<String, Object>) response.getBody().get("output");
-
-                String stockName = stockRepository.findByStockCode(stockCode)
-                        .map(Stock::getStockName)
-                        .orElse("이름없음");
-
-                return StockResponseDto.builder()
-                        .symbol(stockCode)
-                        .name(stockName)
-                        .currentPrice((String) output.get("stck_prpr"))
-                        .changeAmount((String) output.get("prdy_vrss"))
-                        .changeRate((String) output.get("prdy_ctrt"))
-                        .volume((String) output.get("acml_vol"))
-                        .basePrice((String) output.get("stck_sdpr"))
-                        .build();
+                        return StockResponseDto.builder()
+                                .symbol(stockCode)
+                                .name(stockName)
+                                .currentPrice(currentPrice)
+                                .changeAmount((String) output.get("prdy_vrss"))
+                                .changeRate((String) output.get("prdy_ctrt"))
+                                .volume((String) output.get("acml_vol"))
+                                .basePrice((String) output.get("stck_sdpr"))
+                                .build();
+                    }
+                }
+            } else if (body != null) {
+                log.warn("KIS API 시세 조회 실패 ({}): {} - {}", stockCode, body.get("rt_cd"), body.get("msg1"));
             }
         } catch (org.springframework.web.client.HttpClientErrorException.Unauthorized e) {
-            log.warn("KIS 토큰 만료 또는 무효(401). 토큰 재발급 후 재시도합니다.");
+            log.warn("KIS 토큰 만료(401). 재발급 후 재시도.");
             clearTokenCache();
             return fetchPriceFromKisApi(stockCode);
         } catch (Exception e) {
-            log.error("KIS API 호출 중 오류 발생: {}", e.getMessage());
+            log.error("KIS API 호출 에러 ({}): {}", stockCode, e.getMessage());
         }
 
-        // API 호출 실패 시 최소한의 정보를 담은 DTO 반환
-        String stockName = stockRepository.findByStockCode(stockCode)
-                .map(Stock::getStockName)
-                .orElse("이름없음");
-
-        return StockResponseDto.builder()
-                .symbol(stockCode)
-                .name(stockName)
-                .currentPrice("0")
-                .changeAmount("0")
-                .changeRate("0")
-                .volume("0")
-                .basePrice("0")
-                .build();
+        return null; // 실패 시 null 반환하여 기존 데이터 보호
     }
 
     /**
