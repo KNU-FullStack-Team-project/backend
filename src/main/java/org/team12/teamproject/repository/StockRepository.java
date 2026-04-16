@@ -4,11 +4,13 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.team12.teamproject.entity.Stock;
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
 public interface StockRepository extends JpaRepository<Stock, Long> {
     Optional<Stock> findByStockCode(String stockCode);
+    List<Stock> findAllByStockCodeIn(List<String> stockCodes);
 
     @Query(value = "SELECT * FROM ( " +
                    "  SELECT a.*, ROWNUM rnum FROM ( " +
@@ -37,6 +39,11 @@ public interface StockRepository extends JpaRepository<Stock, Long> {
 
     @Query("SELECT COUNT(s) FROM Stock s WHERE s.marketType != 'UNKNOWN' AND LENGTH(s.stockCode) = 6")
     long countValidStocks();
+
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.transaction.annotation.Transactional
+    @Query("UPDATE Stock s SET s.currentPrice = :price, s.changeRate = :rate, s.changeAmount = :amt, s.volume = :volume WHERE s.stockCode = :stockCode")
+    void updateStockPriceInfo(@Param("stockCode") String stockCode, @Param("price") BigDecimal price, @Param("rate") BigDecimal rate, @Param("amt") BigDecimal amt, @Param("volume") Long volume);
 
     @org.springframework.data.jpa.repository.Modifying
     @org.springframework.transaction.annotation.Transactional

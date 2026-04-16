@@ -13,12 +13,15 @@ import org.team12.teamproject.repository.HoldingRepository;
 
 import org.team12.teamproject.repository.UserRepository;
 import org.team12.teamproject.entity.User;
+import org.team12.teamproject.dto.StockResponseDto;
 import java.time.LocalDateTime;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.text.NumberFormat;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -65,39 +68,44 @@ public class AccountService {
         Long userId = account.getUser().getId();
         List<String> favoriteSymbols = favoriteStockService.getFavoriteSymbols(userId);
 
-        // [최적화] 병렬 스트림을 사용하여 관심 종목 정보 동시 조회 (순차 처리 대비 속도 대폭 개선)
-        List<AccountDashboardDto.FavoriteStockDto> favoriteStockDtos = favoriteSymbols.parallelStream()
-                .map(symbol -> {
-                    try {
-                        var detail = stockService.getStockDetail(symbol);
-                        return AccountDashboardDto.FavoriteStockDto.builder()
-                                .name(detail.getName())
-                                .currentPrice(detail.getCurrentPrice())
-                                .changeRate(detail.getChangeRate())
-                                .volume(detail.getVolume())
-                                .build();
-                    } catch (Exception e) {
-                        log.warn("관심 종목 정보 조회 실패 ({}): {}", symbol, e.getMessage());
-                        return null;
-                    }
-                })
-                .filter(java.util.Objects::nonNull)
+        // [최적화] 일괄 조회를 통해 개별 API 호출 오버헤드 제거
+        List<StockResponseDto> favoriteDetails = stockService.getStockDetails(favoriteSymbols);
+        List<AccountDashboardDto.FavoriteStockDto> favoriteStockDtos = favoriteDetails.stream()
+                .map(detail -> AccountDashboardDto.FavoriteStockDto.builder()
+                        .name(detail.getName())
+                        .currentPrice(detail.getCurrentPrice())
+                        .changeRate(detail.getChangeRate())
+                        .volume(detail.getVolume())
+                        .build())
                 .toList();
 
         BigDecimal cashBalance = account.getCashBalance();
-        
-        // [최적화] findAll() 대신 특정 계좌 데이터만 가져오는 전용 메서드 사용
         List<Holding> holdingsList = holdingRepository.findByAccountId(accountId);
-                
-        // [최적화] 보유 종목 현재가 동시 조회 및 데이터 가공
-        List<AccountDashboardDto.HoldingItemDto> holdingDtos = holdingsList.parallelStream()
+        List<String> holdingSymbols = holdingsList.stream()
+                .map(h -> h.getStock().getStockCode())
+                .toList();
+
+        // [최적화] 보유 종목 시세도 벌크로 조회
+        List<StockResponseDto> holdingPriceDetails = stockService.getStockDetails(holdingSymbols);
+        
+        // 시세 정보를 종목 코드별로 맵핑 (성능 최적화)
+        Map<String, StockResponseDto> priceMap = holdingPriceDetails.stream()
+                .collect(Collectors.toMap(StockResponseDto::getSymbol, d -> d));
+
+        List<AccountDashboardDto.HoldingItemDto> holdingDtos = holdingsList.stream()
                 .map(h -> {
+                    StockResponseDto priceDto = priceMap.get(h.getStock().getStockCode());
                     BigDecimal currentPrice = BigDecimal.ZERO;
-                    try {
-                        String currentPriceStr = stockService.getStockDetail(h.getStock().getStockCode()).getCurrentPrice();
-                        currentPrice = new BigDecimal(currentPriceStr);
-                    } catch (Exception e) {
-                        log.warn("주식 가격 조회 실패 ({}): {}", h.getStock().getStockCode(), e.getMessage());
+                    String currentPriceFormatted = "0";
+
+                    if (priceDto != null) {
+                        try {
+                            String cpStr = priceDto.getCurrentPrice().replace(",", "");
+                            currentPrice = new BigDecimal(cpStr);
+                            currentPriceFormatted = CURRENCY_FORMAT.format(currentPrice);
+                        } catch (Exception e) {
+                            log.warn("가격 변환 실패 ({}): {}", h.getStock().getStockCode(), e.getMessage());
+                        }
                     }
 
                     BigDecimal holdingValue = currentPrice.multiply(BigDecimal.valueOf(h.getQuantity()));
@@ -106,7 +114,7 @@ public class AccountService {
                             .stockName(h.getStock().getStockName())
                             .quantity(h.getQuantity())
                             .averageBuyPrice(CURRENCY_FORMAT.format(h.getAverageBuyPrice()))
-                            .currentPrice(CURRENCY_FORMAT.format(currentPrice))
+                            .currentPrice(currentPriceFormatted)
                             .holdingValue(CURRENCY_FORMAT.format(holdingValue))
                             .holdingValueRaw(holdingValue)
                             .build();

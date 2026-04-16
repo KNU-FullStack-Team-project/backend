@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.*;
 import java.util.stream.Collectors;
@@ -207,15 +208,19 @@ public class StockService {
                     }
                 }
 
-                // 레디스에 데이터가 없는 경우: API를 즉시 호출하지 않고 일단 0원으로 반환 + 우선순위 큐(1단계)에 등록
-                builder.currentPrice("0")
-                       .changeAmount("0")
-                       .changeRate("0")
-                       .volume("0")
-                       .basePrice("0");
-                content.add(builder.build());
+                // [최적화] Redis에 데이터가 없는 경우: DB에 저장된 마지막 시세(Last Known Price)를 반환
+                if (stock.getCurrentPrice() != null) {
+                    builder.currentPrice(stock.getCurrentPrice().toString())
+                           .changeAmount(stock.getChangeAmount() != null ? stock.getChangeAmount().toString() : "0")
+                           .changeRate(stock.getChangeRate() != null ? stock.getChangeRate().toString() : "0")
+                           .volume(stock.getVolume() != null ? stock.getVolume().toString() : "0")
+                           .basePrice(stock.getCurrentPrice().toString()); // Fallback으로 현재가 사용
+                } else {
+                    // DB에도 없으면 0원 반환
+                    builder.currentPrice("0").changeAmount("0").changeRate("0").volume("0").basePrice("0");
+                }
                 
-                // 프론트에서 빈 값이 보일 경우, 워커가 신속하게 가져오도록 최상위 우선순위 부여
+                content.add(builder.build());
                 enqueueUpdate(stock.getStockCode(), 1);
             }
         } catch (Exception e) {
@@ -295,6 +300,68 @@ public class StockService {
     }
 
     /**
+     * 주식 상세 일괄 조회 (Redis Multi-Get 및 DB 일괄 조회로 최적화)
+     */
+    public List<StockResponseDto> getStockDetails(List<String> stockCodes) {
+        if (stockCodes == null || stockCodes.isEmpty()) return new ArrayList<>();
+
+        // 1. Redis 일괄 조회
+        List<String> keys = stockCodes.stream()
+                .map(code -> "stock:price:" + code)
+                .collect(Collectors.toList());
+        List<String> cachedValues = redisTemplate.opsForValue().multiGet(keys);
+        
+        // 2. DB에서 종목 정보 일괄 조회 (이름 및 백업 시세용)
+        List<Stock> stocksInDb = stockRepository.findAllByStockCodeIn(stockCodes);
+        Map<String, Stock> stockMap = stocksInDb.stream()
+                .collect(Collectors.toMap(Stock::getStockCode, s -> s));
+
+        List<StockResponseDto> results = new ArrayList<>();
+
+        for (int i = 0; i < stockCodes.size(); i++) {
+            String code = stockCodes.get(i);
+            String cachedData = (cachedValues != null && i < cachedValues.size()) ? cachedValues.get(i) : null;
+            
+            Stock stock = stockMap.get(code);
+            String stockName = (stock != null) ? stock.getStockName() : "이름없음";
+
+            StockResponseDto.StockResponseDtoBuilder builder = StockResponseDto.builder()
+                    .symbol(code)
+                    .name(stockName);
+
+            if (cachedData != null) {
+                String[] parts = cachedData.split(":");
+                if (parts.length >= 5) {
+                    results.add(builder
+                            .currentPrice(parts[0])
+                            .changeAmount(parts[1])
+                            .changeRate(parts[2])
+                            .volume(parts[3])
+                            .basePrice(parts[4])
+                            .build());
+                    continue;
+                }
+            }
+            
+            // 3. [최적화] Redis 캐시 부재 시 DB Fallback 적용
+            if (stock != null && stock.getCurrentPrice() != null) {
+                results.add(builder
+                        .currentPrice(stock.getCurrentPrice().toString())
+                        .changeAmount(stock.getChangeAmount() != null ? stock.getChangeAmount().toString() : "0")
+                        .changeRate(stock.getChangeRate() != null ? stock.getChangeRate().toString() : "0")
+                        .volume(stock.getVolume() != null ? stock.getVolume().toString() : "0")
+                        .basePrice(stock.getCurrentPrice().toString())
+                        .build());
+            } else {
+                results.add(builder.currentPrice("0").changeAmount("0").changeRate("0").volume("0").basePrice("0").build());
+            }
+
+            enqueueUpdate(code, 1);
+        }
+        return results;
+    }
+
+    /**
      * 주식 상세 조회 (가격 포함)
      */
     public StockResponseDto getStockDetail(String stockCode) {
@@ -325,10 +392,27 @@ public class StockService {
             log.warn("Redis 캐시 파싱 실패 ({}): {}", cacheKey, e.getMessage());
             try {
                 redisTemplate.delete(cacheKey);
-            } catch (Exception ignore) {
-            }
+            } catch (Exception ignore) {}
         }
 
+        // [최적화] Redis 캐시가 없는 경우 DB 최신 가격(백업)을 즉시 반환하여 '시세 확인 중' 방지
+        Optional<Stock> stockOpt = stockRepository.findByStockCode(stockCode);
+        if (stockOpt.isPresent() && stockOpt.get().getCurrentPrice() != null) {
+            Stock s = stockOpt.get();
+            // 백그라운드 업데이트 예약만 하고 DB 값을 즉시 반환
+            enqueueUpdate(stockCode, 1);
+            return StockResponseDto.builder()
+                    .symbol(stockCode)
+                    .name(s.getStockName())
+                    .currentPrice(s.getCurrentPrice().toString())
+                    .changeAmount(s.getChangeAmount() != null ? s.getChangeAmount().toString() : "0")
+                    .changeRate(s.getChangeRate() != null ? s.getChangeRate().toString() : "0")
+                    .volume(s.getVolume() != null ? s.getVolume().toString() : "0")
+                    .basePrice(s.getCurrentPrice().toString())
+                    .build();
+        }
+
+        // DB에도 정보가 없는 완전 초기 상황에서만 API 실시간 호출 진행
         StockResponseDto dto = fetchPriceFromKisApi(stockCode);
 
         if (dto == null) {
@@ -618,12 +702,15 @@ public class StockService {
                 dto.getBasePrice());
         redisTemplate.opsForValue().set(cacheKey, value, Duration.ofMinutes(30));
         
-        // 추가: DB의 volume 필드도 업데이트 (정렬 및 실시간 필터링을 위해 필요)
+        // [중요] DB의 시세 정보도 비동기적으로 업데이트하여 Fallback 시스템 유지
         try {
+            BigDecimal price = new BigDecimal(dto.getCurrentPrice().replace(",", ""));
+            BigDecimal rate = new BigDecimal(dto.getChangeRate().replace(",", ""));
+            BigDecimal amt = new BigDecimal(dto.getChangeAmount().replace(",", ""));
             long vol = Long.parseLong(dto.getVolume());
-            stockRepository.updateStockVolume(dto.getSymbol(), vol);
+            stockRepository.updateStockPriceInfo(dto.getSymbol(), price, rate, amt, vol);
         } catch (Exception e) {
-            // 숫자 형식 오류 등 무시
+            log.warn("DB 시세 업데이트 실패 ({}): {}", dto.getSymbol(), e.getMessage());
         }
     }
 
