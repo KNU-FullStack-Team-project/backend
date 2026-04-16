@@ -396,7 +396,7 @@ public class StockService {
     }
 
     public List<StockCandleDto> getStockHistory(String symbol, String period, boolean forceFetch) {
-        String cacheKey = "stock:history:v3:" + symbol + ":" + period;
+        String cacheKey = "stock:history:v4:" + symbol + ":" + period;
 
         if (!forceFetch) {
             try {
@@ -426,15 +426,15 @@ public class StockService {
                 String startDate;
 
                 if ("1W".equals(period)) {
-                    startDate = now.minusDays(30).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                    startDate = now.minusDays(200).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else if ("1M".equals(period)) {
-                    startDate = now.minusDays(31).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                    startDate = now.minusDays(200).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else if ("6M".equals(period)) {
                     periodCode = "M";
                     startDate = now.minusMonths(6).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else if ("1Y".equals(period)) {
-                    periodCode = "D"; // 연도 차트도 상세 조회를 위해 일봉(D)으로 변경
-                    startDate = now.minusYears(1).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                    periodCode = "D"; 
+                    startDate = now.minusYears(2).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else {
                     startDate = now.minusDays(30).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 }
@@ -499,8 +499,8 @@ public class StockService {
         try {
             ensureAccessToken();
 
-            // 최대 2회 호출하여 당일 데이터의 최근 구간들을 충분히 확보 (백그라운드 부하 방지 및 1.2초 내 응답)
-            for (int i = 0; i < 2; i++) {
+            // 최대 5회 호출하여 최근 구간들을 대량 확보 (약 500개 봉, 1주일치 분봉 데이터)
+            for (int i = 0; i < 5; i++) {
                 String url = apiUrl + "/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
                         + "?FID_COND_MRKT_DIV_CODE=J"
                         + "&FID_INPUT_ISCD=" + symbol
