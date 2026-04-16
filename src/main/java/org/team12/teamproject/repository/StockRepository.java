@@ -14,7 +14,8 @@ public interface StockRepository extends JpaRepository<Stock, Long> {
                    "  SELECT a.*, ROWNUM rnum FROM ( " +
                    "    SELECT * FROM stock " +
                    "    WHERE market_type != 'UNKNOWN' AND LENGTH(stock_code) = 6 " +
-                   "    ORDER BY stock_id ASC " +
+                   "    AND (volume > 0) " +
+                   "    ORDER BY volume DESC NULLS LAST, stock_id ASC " +
                    "  ) a WHERE ROWNUM <= :upper " +
                    ") WHERE rnum > :lower", nativeQuery = true)
     List<Stock> findStocksNative(@Param("lower") int lower, @Param("upper") int upper);
@@ -30,11 +31,17 @@ public interface StockRepository extends JpaRepository<Stock, Long> {
                    "    SELECT * FROM stock " +
                    "    WHERE (stock_name LIKE %:keyword% OR stock_code LIKE %:keyword%) " +
                    "    AND market_type != 'UNKNOWN' AND LENGTH(stock_code) = 6 " +
-                   "    ORDER BY stock_name ASC " +
+                   "    AND volume > 0 " +
+                   "    ORDER BY volume DESC NULLS LAST, stock_name ASC " +
                    "  ) a WHERE ROWNUM <= 50 " +
                    ") WHERE rnum > 0", nativeQuery = true)
     List<Stock> searchStocks(@Param("keyword") String keyword);
 
-    @Query("SELECT COUNT(s) FROM Stock s WHERE s.marketType != 'UNKNOWN' AND LENGTH(s.stockCode) = 6")
+    @Query("SELECT COUNT(s) FROM Stock s WHERE s.marketType != 'UNKNOWN' AND LENGTH(s.stockCode) = 6 AND s.volume > 0")
     long countValidStocks();
+
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.transaction.annotation.Transactional
+    @Query("UPDATE Stock s SET s.volume = :volume WHERE s.stockCode = :stockCode")
+    void updateStockVolume(@Param("stockCode") String stockCode, @Param("volume") Long volume);
 }

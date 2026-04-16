@@ -29,6 +29,9 @@ public class Stock implements Serializable {
     @Column(name = "market_type", length = 20, nullable = false)
     private String marketType;
 
+    @Column(name = "volume")
+    private Long volume;
+
     @Column(name = "is_active", nullable = false)
     private Boolean isActive;
 
@@ -36,10 +39,11 @@ public class Stock implements Serializable {
     private LocalDateTime createdAt;
 
     @Builder
-    public Stock(String stockCode, String stockName, String marketType, Boolean isActive, LocalDateTime createdAt) {
+    public Stock(String stockCode, String stockName, String marketType, Long volume, Boolean isActive, LocalDateTime createdAt) {
         this.stockCode = stockCode;
         this.stockName = stockName;
         this.marketType = marketType;
+        this.volume = volume;
         this.isActive = isActive;
         this.createdAt = createdAt;
     }
@@ -54,6 +58,10 @@ public class Stock implements Serializable {
         if (newType != null && !newType.trim().isEmpty()) {
             this.marketType = newType.trim();
         }
+    }
+
+    public void updateVolume(Long volume) {
+        this.volume = volume;
     }
 
     @Override

@@ -99,6 +99,14 @@ public class StockService {
                     StockResponseDto latest = fetchPriceFromKisApi(task.symbol);
                     if (latest != null) {
                         saveToRedis(latest);
+                        // DB의 volume 필드도 즉시 동기화 (필터링 및 정렬용)
+                        try {
+                            long vol = Long.parseLong(latest.getVolume());
+                            stockRepository.updateStockVolume(task.symbol, vol);
+                        } catch (Exception e) {
+                            log.warn("DB 거래량 업데이트 실패 ({}): {}", task.symbol, e.getMessage());
+                        }
+                        
                         if (task.priority <= 2) {
                             eventPublisher.publishEvent(new PriceUpdateEvent(this, task.symbol, new BigDecimal(latest.getCurrentPrice())));
                         }
@@ -609,6 +617,14 @@ public class StockService {
                 dto.getVolume(),
                 dto.getBasePrice());
         redisTemplate.opsForValue().set(cacheKey, value, Duration.ofMinutes(30));
+        
+        // 추가: DB의 volume 필드도 업데이트 (정렬 및 실시간 필터링을 위해 필요)
+        try {
+            long vol = Long.parseLong(dto.getVolume());
+            stockRepository.updateStockVolume(dto.getSymbol(), vol);
+        } catch (Exception e) {
+            // 숫자 형식 오류 등 무시
+        }
     }
 
     private void ensureAccessToken() {
