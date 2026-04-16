@@ -611,4 +611,61 @@ public class CommunityService {
                         "COMPLETED"
                 ) == 1;
     }
+    @Transactional(readOnly = true)
+public List<CommunityPostResponseDto> getFreePosts() {
+
+    Board board = boardRepository.findByBoardCode("FREE")
+            .orElseThrow(() -> new IllegalArgumentException("자유게시판이 존재하지 않습니다."));
+
+    return postRepository.findByBoardIdAndStatusOrderByCreatedAtDesc(board.getId(), "NORMAL")
+            .stream()
+            .map(post -> CommunityPostResponseDto.builder()
+                    .postId(post.getId())
+                    .userId(post.getUser().getId())
+                    .nickname(post.getUser().getNickname())
+                    .title(post.getTitle())
+                    .commentCount(post.getCommentCount())
+                    .viewCount(post.getViewCount())
+                    .likeCount(post.getLikeCount())
+                    .isNotice(post.getIsNotice())
+                    .createdAt(post.getCreatedAt())
+                    .build())
+            .toList();
+}
+
+@Transactional
+public Long createFreePost(CommunityPostCreateRequestDto request, String email) {
+
+    User user = userRepository.findByEmail(email)
+            .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 사용자입니다."));
+
+    Board board = boardRepository.findByBoardCode("FREE")
+            .orElseThrow(() -> new IllegalArgumentException("자유게시판이 존재하지 않습니다."));
+
+    validatePostRequest(request.getTitle(), request.getContent());
+
+    Post post = Post.builder()
+            .board(board)
+            .user(user)
+            .stock(null) // 🔥 중요
+            .title(request.getTitle())
+            .content(request.getContent())
+            .viewCount(0)
+            .likeCount(0)
+            .commentCount(0)
+            .reportCount(0)
+            .status("NORMAL")
+            .isNotice(false)
+            .createdAt(LocalDateTime.now())
+            .updatedAt(LocalDateTime.now())
+            .build();
+
+    Post savedPost = postRepository.save(post);
+
+    finalizeTempAttachments(savedPost, user);
+    syncAttachments(savedPost, user, request.getAttachmentIds(), false);
+
+    return savedPost.getId();
+}
+
 }

@@ -41,3 +41,6 @@ secrets.properties
 ### Uploaded Files ###
 profile/
 uploads/
+
+.env
+

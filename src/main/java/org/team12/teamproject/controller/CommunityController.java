@@ -217,4 +217,26 @@ public class CommunityController {
     public ResponseEntity<List<CommunityPostResponseDto>> getNoticePosts() {
         return ResponseEntity.ok(communityService.getNoticePosts());
     }
+    @GetMapping("/boards/free/posts")
+public ResponseEntity<List<CommunityPostResponseDto>> getFreePosts() {
+    return ResponseEntity.ok(communityService.getFreePosts());
+}
+
+@PostMapping("/boards/free/posts")
+public ResponseEntity<?> createFreePost(
+        @RequestBody CommunityPostCreateRequestDto request,
+        Authentication authentication
+) {
+    try {
+        if (authentication == null) {
+            return ResponseEntity.status(401).body("로그인이 필요합니다.");
+        }
+
+        Long postId = communityService.createFreePost(request, authentication.getName());
+        return ResponseEntity.ok(postId);
+
+    } catch (Exception e) {
+        return ResponseEntity.badRequest().body(e.getMessage());
+    }
+}
 }
