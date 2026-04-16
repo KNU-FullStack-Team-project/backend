@@ -5,4 +5,5 @@ import org.team12.teamproject.entity.PostReport;
 
 public interface PostReportRepository extends JpaRepository<PostReport, Long> {
     boolean existsByPostIdAndReporterUserId(Long postId, Long reporterUserId);
+    java.util.List<PostReport> findAllByOrderByCreatedAtDesc();
 }

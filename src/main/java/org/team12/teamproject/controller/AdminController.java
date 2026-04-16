@@ -10,8 +10,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.team12.teamproject.dto.AdminUpdateUserRequestDto;
+import org.team12.teamproject.dto.AdminReportItemDto;
 import org.team12.teamproject.dto.UserActivityItemDto;
 import org.team12.teamproject.dto.UserProfileResponseDto;
+import org.team12.teamproject.service.AdminReportService;
 import org.team12.teamproject.service.UserActivityService;
 import org.team12.teamproject.service.UserService;
 
@@ -29,6 +31,7 @@ public class AdminController {
 
     private final UserService userService;
     private final UserActivityService userActivityService;
+    private final AdminReportService adminReportService;
 
     @GetMapping("/users")
     public ResponseEntity<List<UserProfileResponseDto>> getUsers() {
@@ -38,6 +41,11 @@ public class AdminController {
     @GetMapping("/users/{userId}/activities")
     public ResponseEntity<List<UserActivityItemDto>> getUserActivities(@PathVariable Long userId) {
         return ResponseEntity.ok(userActivityService.getUserActivities(userId));
+    }
+
+    @GetMapping("/reports")
+    public ResponseEntity<List<AdminReportItemDto>> getReports() {
+        return ResponseEntity.ok(adminReportService.getReports());
     }
 
     @PatchMapping("/users/{userId}")
