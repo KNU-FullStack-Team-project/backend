@@ -290,6 +290,7 @@ CREATE TABLE inquiries (
     title VARCHAR2(2000) NOT NULL,
     content CLOB NOT NULL,
     inquiry_status VARCHAR2(20) DEFAULT 'OPEN' NOT NULL, -- OPEN, ANSWERED, CLOSED
+    is_read_by_user NUMBER(1) DEFAULT 1 NOT NULL, -- Boolean 대용 (사용자 읽음 여부)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     CONSTRAINT fk_inquiry_user FOREIGN KEY (user_id) REFERENCES users (user_id)

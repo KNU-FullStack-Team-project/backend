@@ -70,7 +70,7 @@ public class InquiryService {
         User admin = userRepository.findByEmail(adminEmail)
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 사용자입니다."));
         
-        if (!"ADMIN".equals(admin.getRole())) {
+        if (!"ADMIN".equalsIgnoreCase(admin.getRole())) {
             throw new RuntimeException("권한이 없습니다.");
         }
 
@@ -84,7 +84,7 @@ public class InquiryService {
         User admin = userRepository.findByEmail(adminEmail)
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 사용자입니다."));
         
-        if (!"ADMIN".equals(admin.getRole())) {
+        if (!"ADMIN".equalsIgnoreCase(admin.getRole())) {
             throw new RuntimeException("권한이 없습니다.");
         }
 
@@ -129,7 +129,7 @@ public class InquiryService {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 사용자입니다."));
         
-        if ("ADMIN".equals(user.getRole())) {
+        if ("ADMIN".equalsIgnoreCase(user.getRole())) {
             // 관리자: 답변 대기(OPEN) 상태인 모든 문의 개수
             return inquiryRepository.countByStatus("OPEN");
         } else {
