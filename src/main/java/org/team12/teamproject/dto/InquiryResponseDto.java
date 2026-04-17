@@ -18,7 +18,10 @@ public class InquiryResponseDto {
     private String content;
     private String status;
     private String answer;
+    
+    @com.fasterxml.jackson.annotation.JsonProperty("isReadByUser")
     private boolean isReadByUser;
+    
     private LocalDateTime answeredAt;
     private LocalDateTime createdAt;
 }

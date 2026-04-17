@@ -45,11 +45,10 @@ public class InquiryService {
         List<User> admins = userRepository.findByRole("ADMIN");
         for (User admin : admins) {
             notificationService.sendNotification(
-                admin, 
-                "신규 문의 접수", 
-                "[" + requestDto.getCategory() + "] 새 문의가 등록되었습니다.", 
-                NotificationType.INQUIRY
-            );
+                    admin,
+                    "신규 문의 접수",
+                    "[" + requestDto.getCategory() + "] 새 문의가 등록되었습니다.",
+                    NotificationType.INQUIRY);
         }
 
         return id;
@@ -69,7 +68,7 @@ public class InquiryService {
     public List<InquiryResponseDto> getAllInquiries(String adminEmail) {
         User admin = userRepository.findByEmail(adminEmail)
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 사용자입니다."));
-        
+
         if (!"ADMIN".equalsIgnoreCase(admin.getRole())) {
             throw new RuntimeException("권한이 없습니다.");
         }
@@ -83,14 +82,14 @@ public class InquiryService {
     public void replyInquiry(Long inquiryId, String answerContent, String adminEmail) {
         User admin = userRepository.findByEmail(adminEmail)
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 사용자입니다."));
-        
+
         if (!"ADMIN".equalsIgnoreCase(admin.getRole())) {
             throw new RuntimeException("권한이 없습니다.");
         }
 
         Inquiry inquiry = inquiryRepository.findById(inquiryId)
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 문의입니다."));
-        
+
         inquiry.setStatus("ANSWERED");
         inquiry.setReadByUser(false); // 사용자에게 알림이 가도록 false 처리
         inquiry.setUpdatedAt(LocalDateTime.now());
@@ -100,27 +99,32 @@ public class InquiryService {
                         .inquiry(inquiry)
                         .admin(admin)
                         .build());
-        
+
         inquiryAnswer.setContent(answerContent);
         inquiryAnswerRepository.save(inquiryAnswer);
 
         // 작성자에게 실시간 알림 발송
         notificationService.sendNotification(
-            inquiry.getUser(), 
-            "문의 답변 등록", 
-            "남기신 문의에 대한 답변이 등록되었습니다.", 
-            NotificationType.INQUIRY
-        );
+                inquiry.getUser(),
+                "문의 답변 등록",
+                "남기신 문의에 대한 답변이 등록되었습니다.",
+                NotificationType.INQUIRY);
     }
 
     @Transactional
     public void markAsRead(Long inquiryId, String email) {
         Inquiry inquiry = inquiryRepository.findById(inquiryId)
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 문의입니다."));
-        
-        // 본인 문의인 경우에만 읽음 처리
-        if (inquiry.getUser().getEmail().equals(email)) {
+
+        System.out.println("[Debug] MarkAsRead Request - InquiryID: " + inquiryId + ", Email: " + email);
+
+        // 본인 문의인 경우에만 읽음 처리 (대소문자 무시)
+        if (inquiry.getUser().getEmail().equalsIgnoreCase(email)) {
             inquiry.setReadByUser(true);
+            inquiryRepository.save(inquiry); // 명시적 저장
+            System.out.println("[Debug] Inquiry " + inquiryId + " marked as READ for user " + email);
+        } else {
+            System.out.println("[Debug] MarkAsRead FAILED: Email mismatch. Owner: " + inquiry.getUser().getEmail());
         }
     }
 
@@ -128,7 +132,7 @@ public class InquiryService {
     public long getUnreadCount(String email) {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 사용자입니다."));
-        
+
         if ("ADMIN".equalsIgnoreCase(user.getRole())) {
             // 관리자: 답변 대기(OPEN) 상태인 모든 문의 개수
             return inquiryRepository.countByStatus("OPEN");
@@ -140,6 +144,11 @@ public class InquiryService {
 
     private InquiryResponseDto convertToDto(Inquiry inquiry) {
         InquiryAnswer answerObj = inquiryAnswerRepository.findByInquiryId(inquiry.getId()).orElse(null);
+
+        System.out.println("[Debug] Converting Inquiry ID: " + inquiry.getId());
+        System.out.println(
+                "[Debug] Content length: " + (inquiry.getContent() != null ? inquiry.getContent().length() : "NULL"));
+        System.out.println("[Debug] Answer exist: " + (answerObj != null));
 
         return InquiryResponseDto.builder()
                 .inquiryId(inquiry.getId())
