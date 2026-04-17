@@ -488,28 +488,35 @@ public class CompetitionService {
             throw new RuntimeException("예정된 대회는 랭킹을 조회할 수 없습니다.");
         }
 
+        // [수정] 현금 잔고 + 주식 평가액(현재가 * 수량)을 합산하여 총 자산 산출
         String sql = """
         SELECT
             u.user_id,
             u.nickname,
             u.profile_image_url,
-            SUM(a.cash_balance) AS total_asset,
+            (a.cash_balance + NVL(h_agg.total_stock_eval, 0)) AS total_asset,
             c.initial_seed_money,
             CASE
                 WHEN c.initial_seed_money = 0 THEN 0
                 ELSE ROUND(
-                    (SUM(a.cash_balance) - c.initial_seed_money)
+                    ((a.cash_balance + NVL(h_agg.total_stock_eval, 0)) - c.initial_seed_money)
                     / c.initial_seed_money * 100,
                     2
                 )
             END AS return_rate,
-            (SUM(a.cash_balance) - c.initial_seed_money) AS profit_amount
+            ((a.cash_balance + NVL(h_agg.total_stock_eval, 0)) - c.initial_seed_money) AS profit_amount
         FROM competition_participants cp
         JOIN users u ON cp.user_id = u.user_id
         JOIN accounts a ON cp.account_id = a.account_id
         JOIN competitions c ON cp.competition_id = c.competition_id
+        LEFT JOIN (
+            -- 계좌별 보유 주식의 현재 가치 합산
+            SELECT h.account_id, SUM(h.quantity * s.current_price) AS total_stock_eval
+            FROM holdings h
+            JOIN stock s ON h.stock_id = s.stock_id
+            GROUP BY h.account_id
+        ) h_agg ON a.account_id = h_agg.account_id
         WHERE cp.competition_id = ?
-        GROUP BY u.user_id, u.nickname, u.profile_image_url, c.initial_seed_money
         ORDER BY return_rate DESC
         """;
 
