@@ -158,6 +158,7 @@ public class InquiryService {
                 .status(inquiry.getStatus())
                 .isReadByUser(inquiry.isReadByUser()) // DTO에도 읽음 여부 포함
                 .answer(answerObj != null ? answerObj.getContent() : null)
+                .nickname(inquiry.getUser().getNickname())
                 .answeredAt(answerObj != null ? answerObj.getCreatedAt() : null)
                 .createdAt(inquiry.getCreatedAt())
                 .build();
