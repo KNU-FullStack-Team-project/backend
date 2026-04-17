@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "inquiries")
 @Getter
+@Setter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
 @Builder
@@ -35,6 +36,10 @@ public class Inquiry {
     @Builder.Default
     @Column(name = "inquiry_status", nullable = false, length = 20)
     private String status = "OPEN";
+
+    @Builder.Default
+    @Column(name = "is_read_by_user", nullable = false)
+    private boolean isReadByUser = true;
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
