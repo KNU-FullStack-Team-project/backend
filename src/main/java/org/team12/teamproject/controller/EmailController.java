@@ -10,7 +10,7 @@ import java.util.Map;
 
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/email")
+@RequestMapping("/api/email")
 @CrossOrigin(origins = {
         "http://localhost:5173",
         "http://localhost:5174",

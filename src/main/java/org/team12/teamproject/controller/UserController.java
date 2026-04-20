@@ -26,7 +26,7 @@ import java.security.Principal;
 import java.util.Map;
 
 @RestController
-@RequestMapping("/users")
+@RequestMapping("/api/users")
 @RequiredArgsConstructor
 @CrossOrigin(origins = {
         "http://localhost:5173",
@@ -56,8 +56,7 @@ public class UserController {
                     e.getMessage(),
                     null,
                     null,
-                    e.isCaptchaRequired()
-            );
+                    e.isCaptchaRequired());
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(response);
         }
     }
@@ -88,7 +87,8 @@ public class UserController {
     }
 
     @GetMapping("/check-nickname")
-    public ResponseEntity<String> checkNickname(@RequestParam String nickname, @RequestParam(required = false) String email) {
+    public ResponseEntity<String> checkNickname(@RequestParam String nickname,
+            @RequestParam(required = false) String email) {
         return ResponseEntity.ok(userService.checkNickname(nickname, email));
     }
 

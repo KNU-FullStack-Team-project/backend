@@ -29,38 +29,34 @@ public class SecurityConfig {
         System.out.println("=== SecurityConfig loaded ===");
 
         http
-            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-            .csrf(csrf -> csrf.disable())
-            .sessionManagement(session ->
-                session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
-            )
-            .authorizeHttpRequests(auth -> auth
-                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                .requestMatchers(
-                    "/users/login",
-                    "/users/signup",
-                    "/users/refresh",
-                    "/users/check-email",
-                    "/error",
-                    "/users/profile-image",
-                    "/profile/**",
-                    "/uploads/**",
-                    "/api/stocks/**",
-                    "/email/**",
-                    "/users/reset-password",
-                    "/api/competitions/**",
-                    "/api/community/**",
-                    "/api/notifications/**",
-                    "/api/admin/**",
-                    "/api/inquiries/**"
-                ).permitAll()
-                .requestMatchers("/api/admin/**").hasRole("ADMIN")
-                .anyRequest().authenticated()
-            )
-            .addFilterBefore(
-                jwtAuthenticationFilter,
-                UsernamePasswordAuthenticationFilter.class
-            );
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+                .csrf(csrf -> csrf.disable())
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        .requestMatchers(
+                                "/api/users/login",
+                                "/api/users/signup",
+                                "/api/users/refresh",
+                                "/api/users/check-email",
+                                "/error",
+                                "/api/users/profile-image",
+                                "/profile/**",
+                                "/uploads/**",
+                                "/api/stocks/**",
+                                "/api/email/**",
+                                "/api/users/reset-password",
+                                "/api/competitions/**",
+                                "/api/community/**",
+                                "/api/notifications/**",
+                                "/api/admin/**",
+                                "/api/inquiries/**")
+                        .permitAll()
+                        .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                        .anyRequest().authenticated())
+                .addFilterBefore(
+                        jwtAuthenticationFilter,
+                        UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
@@ -70,21 +66,17 @@ public class SecurityConfig {
         CorsConfiguration configuration = new CorsConfiguration();
 
         configuration.setAllowedOrigins(
-            List.of(
-                "http://localhost:3000",
-                "http://localhost:5173",
-                "http://localhost:5174"
-            )
-        );
+                List.of(
+                        "http://localhost:3000",
+                        "http://localhost:5173",
+                        "http://localhost:5174"));
         configuration.setAllowedMethods(
-            List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
-        );
+                List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("*"));
         configuration.setExposedHeaders(List.of("Authorization"));
         configuration.setAllowCredentials(true);
 
-        UrlBasedCorsConfigurationSource source =
-            new UrlBasedCorsConfigurationSource();
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);
         return source;
     }
