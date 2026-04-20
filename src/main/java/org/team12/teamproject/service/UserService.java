@@ -278,7 +278,7 @@ public class UserService {
             Path profileImagePath = profileDirectory.resolve(user.getId() + ".png");
             ImageIO.write(profileImage, "png", profileImagePath.toFile());
 
-            user.setProfileImageUrl("/profile/" + user.getId() + ".png");
+            user.setProfileImageUrl("/api/profile/" + user.getId() + ".png");
             user.setUpdatedAt(LocalDateTime.now());
             userRepository.save(user);
 
@@ -513,11 +513,16 @@ public class UserService {
 
         Long accountId = accounts.get(0).getId();
 
+        String finalProfileImageUrl = user.getProfileImageUrl();
+        if (finalProfileImageUrl != null && finalProfileImageUrl.startsWith("/profile")) {
+            finalProfileImageUrl = "/api" + finalProfileImageUrl;
+        }
+
         return UserProfileResponseDto.builder()
                 .id(user.getId())
                 .email(user.getEmail())
                 .nickname(user.getNickname())
-                .profileImageUrl(user.getProfileImageUrl())
+                .profileImageUrl(finalProfileImageUrl)
                 .role(user.getRole())
                 .status(user.getStatus())
                 .createdAt(user.getCreatedAt() != null ? user.getCreatedAt().toString() : null)

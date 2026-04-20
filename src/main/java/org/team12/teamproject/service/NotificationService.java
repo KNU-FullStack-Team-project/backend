@@ -10,7 +10,6 @@ import org.team12.teamproject.entity.User;
 import org.team12.teamproject.repository.NotificationRepository;
 
 import java.util.List;
-import java.util.Map;
 
 @Slf4j
 @Service
@@ -42,10 +41,9 @@ public class NotificationService {
                 "NOTIFICATION_CREATE",
                 "NOTIFICATION",
                 String.valueOf(notification.getId()),
-                "type=" + type + ", title=" + title
-        );
-        
-        log.info("알림 생성 및 전송 완료: UserId={}, Type={}, Title={}, Message={}", 
+                "type=" + type + ", title=" + title);
+
+        log.info("알림 생성 및 전송 완료: UserId={}, Type={}, Title={}, Message={}",
                 user.getId(), type, title, message);
     }
 
@@ -70,8 +68,7 @@ public class NotificationService {
                             "NOTIFICATION_READ",
                             "NOTIFICATION",
                             String.valueOf(notification.getId()),
-                            "mark_as_read"
-                    );
+                            "mark_as_read");
                 });
     }
 
@@ -86,8 +83,7 @@ public class NotificationService {
                             "NOTIFICATION_READ",
                             "NOTIFICATION",
                             String.valueOf(notification.getId()),
-                            "mark_all_as_read"
-                    );
+                            "mark_all_as_read");
                 });
     }
 }

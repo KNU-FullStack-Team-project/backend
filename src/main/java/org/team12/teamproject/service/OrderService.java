@@ -18,7 +18,6 @@ import org.team12.teamproject.repository.AccountRepository;
 import org.team12.teamproject.repository.HoldingRepository;
 import org.team12.teamproject.repository.OrderRepository;
 import org.team12.teamproject.repository.StockRepository;
-import org.team12.teamproject.util.MarketUtils;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;

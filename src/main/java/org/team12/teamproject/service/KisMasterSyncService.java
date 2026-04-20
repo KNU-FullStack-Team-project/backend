@@ -1,6 +1,5 @@
 package org.team12.teamproject.service;
 
-import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -57,7 +56,7 @@ public class KisMasterSyncService {
         }).start();
     }
 
-    /* 
+    /*
      * 매일 오전 8시(시장 개장 전) 정기 업데이트 스케줄러
      * [최적화] 거대 트랜잭션을 방지하기 위해 @Transactional 제거
      */
@@ -75,12 +74,12 @@ public class KisMasterSyncService {
 
     private void syncMarket(String zipUrl, String marketType) throws Exception {
         log.info("{} 마스터 파일 다운로드 및 파싱 시작...", marketType);
-        
+
         // 기존 DB에 저장된 주식 목록 해시맵 구성 (빠른 검색용)
         Map<String, Stock> existingStocks = stockRepository.findAll().stream()
-                .collect(Collectors.toMap(Stock::getStockCode, Function.identity(), (existing, replacement) -> existing));
+                .collect(Collectors.toMap(Stock::getStockCode, Function.identity(),
+                        (existing, replacement) -> existing));
 
-        
         List<Stock> newStocks = new ArrayList<>();
         List<Stock> updatedStocks = new ArrayList<>();
         int insertCount = 0;
@@ -92,7 +91,7 @@ public class KisMasterSyncService {
                 // MS949 (또는 EUC-KR) 인코딩 필수
                 BufferedReader br = new BufferedReader(new InputStreamReader(zis, "MS949"));
                 String line;
-                
+
                 while ((line = br.readLine()) != null) {
                     byte[] bytes = line.getBytes("MS949");
 
@@ -100,11 +99,10 @@ public class KisMasterSyncService {
                         continue; // 비정상 라인 무시
                     }
 
-                    
                     // KIS 마스터 기준: 0~9 단축코드, 9~21 표준코드, 21~61 한글명, 76 시장구분
                     String shortCode = new String(bytes, 0, 9, "MS949").trim();
                     String stockName = new String(bytes, 21, 40, "MS949").trim();
-                    
+
                     // 시장구분 코드 파싱 (인덱스 76)
                     char marketDivCode = ' ';
                     if (bytes.length > 76) {
@@ -113,7 +111,7 @@ public class KisMasterSyncService {
 
                     // 필터링 대상 확인 (5로 시작하거나 주식 '1'이 아닌 경우 등)
                     if (shouldSkipStock(stockName, shortCode, marketDivCode)) {
-                        continue; 
+                        continue;
                     }
 
                     // DB 체크
@@ -136,12 +134,15 @@ public class KisMasterSyncService {
                             updateCount++;
                         }
                     }
-                    
+
                     // 대량 배치 처리를 위한 저장 (부하 분산을 위해 배치 사이즈 하향 및 지연 시간 추가)
                     if (newStocks.size() >= 200) {
                         stockRepository.saveAll(newStocks);
                         newStocks.clear();
-                        try { Thread.sleep(50); } catch (InterruptedException ignored) {}
+                        try {
+                            Thread.sleep(50);
+                        } catch (InterruptedException ignored) {
+                        }
                     }
                 }
             }
@@ -160,33 +161,35 @@ public class KisMasterSyncService {
     }
 
     private boolean shouldSkipStock(String name, String code, char marketDivCode) {
-        if (name == null || name.isEmpty()) return true;
-        
+        if (name == null || name.isEmpty())
+            return true;
+
         String upperName = name.toUpperCase();
 
         // 1. 단축코드가 '5'로 시작하는 경우 (일반적으로 ETN 등)
-        if (code != null && code.startsWith("5")) return true;
-        
+        if (code != null && code.startsWith("5"))
+            return true;
+
         // 2. 시장구분 코드 체크는 KOSDAQ 종목(예: 'N')이 필터링되는 문제가 있어 제거합니다.
 
         // 3. 스팩(SPAC), ETN, ETF, 펀드 및 기타 필터
-        if (upperName.contains("스팩") || 
-            upperName.contains("기업인수목적") || 
-            upperName.contains("넥스트웨이브") || 
-            upperName.matches(".*제\\d+호.*") ||
-            upperName.contains("ETN") ||
-            upperName.contains("ETF") ||
-            upperName.contains("KODEX") ||
-            upperName.contains("TIGER") ||
-            upperName.contains("KBSTAR") ||
-            upperName.contains("ARIRANG") ||
-            upperName.contains("HANARO") ||
-            upperName.contains("KOSEF") ||
-            upperName.contains("ACE") ||
-            upperName.contains("SOL") ||
-            upperName.contains("TIMEFOLIO") ||
-            upperName.contains("공모주") ||
-            upperName.contains("하이일드")) {
+        if (upperName.contains("스팩") ||
+                upperName.contains("기업인수목적") ||
+                upperName.contains("넥스트웨이브") ||
+                upperName.matches(".*제\\d+호.*") ||
+                upperName.contains("ETN") ||
+                upperName.contains("ETF") ||
+                upperName.contains("KODEX") ||
+                upperName.contains("TIGER") ||
+                upperName.contains("KBSTAR") ||
+                upperName.contains("ARIRANG") ||
+                upperName.contains("HANARO") ||
+                upperName.contains("KOSEF") ||
+                upperName.contains("ACE") ||
+                upperName.contains("SOL") ||
+                upperName.contains("TIMEFOLIO") ||
+                upperName.contains("공모주") ||
+                upperName.contains("하이일드")) {
             return true;
         }
 
@@ -194,8 +197,7 @@ public class KisMasterSyncService {
 
         return false;
     }
-                
-                
+
     /**
      * DB에 남아있는 불필요 종목들을 완전히 삭제합니다.
      */
@@ -205,7 +207,7 @@ public class KisMasterSyncService {
         log.info(">>> [Cleanup] 불필요 종목(스팩, 코드'5', 비주식 등) 데이터 정리 시작...");
         List<Stock> allStocks = stockRepository.findAll();
         log.info(">>> [Cleanup] 전체 종목 수: {}건", allStocks.size());
-        
+
         List<Stock> toDelete = allStocks.stream()
                 .filter(s -> {
                     // marketDivCode를 알 수 없으므로 ' '로 전달 (이름과 코드로만 필터링)

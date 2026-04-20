@@ -4,10 +4,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.team12.teamproject.repository.FavoriteStockRepository;
-import org.team12.teamproject.repository.UserRepository;
 
 import java.util.List;
-
 
 import org.team12.teamproject.dto.StockResponseDto;
 import java.util.stream.Collectors;
@@ -17,7 +15,6 @@ import java.util.stream.Collectors;
 public class FavoriteStockService {
 
     private final FavoriteStockRepository favoriteStockRepository;
-    private final UserRepository userRepository;
     private final StockService stockService;
 
     public List<String> getFavoriteSymbols(Long userId) {

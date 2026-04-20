@@ -22,67 +22,68 @@ import java.util.List;
 @RequiredArgsConstructor
 public class SecurityConfig {
 
-    private final JwtAuthenticationFilter jwtAuthenticationFilter;
+        private final JwtAuthenticationFilter jwtAuthenticationFilter;
 
-    @Bean
-    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
-        System.out.println("=== SecurityConfig loaded ===");
+        @Bean
+        public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+                System.out.println("=== SecurityConfig loaded ===");
 
-        http
-                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-                .csrf(csrf -> csrf.disable())
-                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                        .requestMatchers(
-                                "/api/users/login",
-                                "/api/users/signup",
-                                "/api/users/refresh",
-                                "/api/users/check-email",
-                                "/error",
-                                "/api/users/profile-image",
-                                "/profile/**",
-                                "/uploads/**",
-                                "/api/stocks/**",
-                                "/api/email/**",
-                                "/api/users/reset-password",
-                                "/api/competitions/**",
-                                "/api/community/**",
-                                "/api/notifications/**",
-                                "/api/admin/**",
-                                "/api/inquiries/**")
-                        .permitAll()
-                        .requestMatchers("/api/admin/**").hasRole("ADMIN")
-                        .anyRequest().authenticated())
-                .addFilterBefore(
-                        jwtAuthenticationFilter,
-                        UsernamePasswordAuthenticationFilter.class);
+                http
+                                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+                                .csrf(csrf -> csrf.disable())
+                                .sessionManagement(session -> session
+                                                .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                                .authorizeHttpRequests(auth -> auth
+                                                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                                                .requestMatchers(
+                                                                "/api/users/login",
+                                                                "/api/users/signup",
+                                                                "/api/users/refresh",
+                                                                "/api/users/check-email",
+                                                                "/error",
+                                                                "/api/users/profile-image",
+                                                                "/api/profile/**",
+                                                                "/api/uploads/**",
+                                                                "/api/stocks/**",
+                                                                "/api/email/**",
+                                                                "/api/users/reset-password",
+                                                                "/api/competitions/**",
+                                                                "/api/community/**",
+                                                                "/api/notifications/**",
+                                                                "/api/admin/**",
+                                                                "/api/inquiries/**")
+                                                .permitAll()
+                                                .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                                                .anyRequest().authenticated())
+                                .addFilterBefore(
+                                                jwtAuthenticationFilter,
+                                                UsernamePasswordAuthenticationFilter.class);
 
-        return http.build();
-    }
+                return http.build();
+        }
 
-    @Bean
-    public CorsConfigurationSource corsConfigurationSource() {
-        CorsConfiguration configuration = new CorsConfiguration();
+        @Bean
+        public CorsConfigurationSource corsConfigurationSource() {
+                CorsConfiguration configuration = new CorsConfiguration();
 
-        configuration.setAllowedOrigins(
-                List.of(
-                        "http://localhost:3000",
-                        "http://localhost:5173",
-                        "http://localhost:5174"));
-        configuration.setAllowedMethods(
-                List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("*"));
-        configuration.setExposedHeaders(List.of("Authorization"));
-        configuration.setAllowCredentials(true);
+                configuration.setAllowedOrigins(
+                                List.of(
+                                                "http://localhost:3000",
+                                                "http://localhost:5173",
+                                                "http://localhost:5174"));
+                configuration.setAllowedMethods(
+                                List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
+                configuration.setAllowedHeaders(List.of("*"));
+                configuration.setExposedHeaders(List.of("Authorization"));
+                configuration.setAllowCredentials(true);
 
-        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        source.registerCorsConfiguration("/**", configuration);
-        return source;
-    }
+                UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+                source.registerCorsConfiguration("/**", configuration);
+                return source;
+        }
 
-    @Bean
-    public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
-    }
+        @Bean
+        public PasswordEncoder passwordEncoder() {
+                return new BCryptPasswordEncoder();
+        }
 }
