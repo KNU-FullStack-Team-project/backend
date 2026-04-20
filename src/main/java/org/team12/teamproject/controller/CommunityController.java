@@ -58,7 +58,10 @@ public class CommunityController {
             Authentication authentication
     ) {
         String email = authentication != null ? authentication.getName() : null;
-        return ResponseEntity.ok(communityService.getPostDetail(postId, email));
+        boolean isAdmin = authentication != null
+                && authentication.getAuthorities().stream()
+                .anyMatch(auth -> "ROLE_ADMIN".equals(auth.getAuthority()));
+        return ResponseEntity.ok(communityService.getPostDetail(postId, email, isAdmin));
     }
 
     @PostMapping("/posts/{postId}/view")

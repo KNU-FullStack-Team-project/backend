@@ -25,6 +25,7 @@ public class InquiryService {
     private final InquiryAnswerRepository inquiryAnswerRepository;
     private final UserRepository userRepository;
     private final NotificationService notificationService;
+    private final UserActivityAuditLogger userActivityAuditLogger;
 
     @Transactional
     public Long createInquiry(InquiryCreateRequestDto requestDto, String email) {
@@ -40,6 +41,15 @@ public class InquiryService {
                 .build();
 
         Long id = inquiryRepository.save(inquiry).getId();
+
+        userActivityAuditLogger.log(
+                user.getId(),
+                user.getEmail(),
+                "INQUIRY_CREATE",
+                "INQUIRY",
+                String.valueOf(id),
+                requestDto.getCategory() + ":" + requestDto.getTitle()
+        );
 
         // 관리자들에게 실시간 알림 발송
         List<User> admins = userRepository.findByRole("ADMIN");
@@ -103,6 +113,15 @@ public class InquiryService {
         inquiryAnswer.setContent(answerContent);
         inquiryAnswerRepository.save(inquiryAnswer);
 
+        userActivityAuditLogger.log(
+                inquiry.getUser().getId(),
+                inquiry.getUser().getEmail(),
+                "INQUIRY_REPLY",
+                "INQUIRY",
+                String.valueOf(inquiryId),
+                "answered_by_admin=" + admin.getId()
+        );
+
         // 작성자에게 실시간 알림 발송
         notificationService.sendNotification(
                 inquiry.getUser(),
@@ -123,6 +142,14 @@ public class InquiryService {
             inquiry.setReadByUser(true);
             inquiryRepository.save(inquiry); // 명시적 저장
             System.out.println("[Debug] Inquiry " + inquiryId + " marked as READ for user " + email);
+            userActivityAuditLogger.log(
+                    inquiry.getUser().getId(),
+                    inquiry.getUser().getEmail(),
+                    "INQUIRY_READ",
+                    "INQUIRY",
+                    String.valueOf(inquiryId),
+                    "mark_as_read"
+            );
         } else {
             System.out.println("[Debug] MarkAsRead FAILED: Email mismatch. Owner: " + inquiry.getUser().getEmail());
         }

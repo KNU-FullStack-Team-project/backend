@@ -22,6 +22,7 @@ import org.team12.teamproject.dto.WithdrawUserRequestDto;
 import org.team12.teamproject.exception.LoginFailedException;
 import org.team12.teamproject.service.UserService;
 
+import java.security.Principal;
 import java.util.Map;
 
 @RestController
@@ -73,6 +74,12 @@ public class UserController {
         } catch (Exception e) {
             return ResponseEntity.status(401).body(Map.of("message", "Refresh failed: " + e.getMessage()));
         }
+    }
+
+    @PostMapping("/logout")
+    public ResponseEntity<Void> logout(Principal principal) {
+        userService.logout(principal.getName());
+        return ResponseEntity.ok().build();
     }
 
     @GetMapping("/check-email")

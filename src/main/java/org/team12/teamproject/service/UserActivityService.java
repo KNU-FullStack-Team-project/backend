@@ -1,126 +1,248 @@
 package org.team12.teamproject.service;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.team12.teamproject.dto.UserActivityItemDto;
-import org.team12.teamproject.entity.Comment;
-import org.team12.teamproject.entity.Order;
-import org.team12.teamproject.entity.Post;
-import org.team12.teamproject.entity.PostLike;
+import org.team12.teamproject.entity.User;
 import org.team12.teamproject.repository.CommentRepository;
-import org.team12.teamproject.repository.OrderRepository;
-import org.team12.teamproject.repository.PostLikeRepository;
-import org.team12.teamproject.repository.PostRepository;
 import org.team12.teamproject.repository.UserRepository;
 
-import java.util.ArrayList;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.Comparator;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class UserActivityService {
 
-    private final UserRepository userRepository;
-    private final PostRepository postRepository;
+    private static final DateTimeFormatter LOG_TIMESTAMP_FORMAT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
+
+    private static final Pattern LOG_LINE_PATTERN = Pattern.compile(
+            "^(?<timestamp>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}) " +
+                    "userId=(?<userId>.*?), userEmail=(?<userEmail>.*?), action=(?<action>.*?), " +
+                    "targetType=(?<targetType>.*?), targetId=(?<targetId>.*?), detail=(?<detail>.*)$"
+    );
+
     private final CommentRepository commentRepository;
-    private final PostLikeRepository postLikeRepository;
-    private final OrderRepository orderRepository;
+    private final UserRepository userRepository;
 
     @Transactional(readOnly = true)
     public List<UserActivityItemDto> getUserActivities(Long userId) {
-        userRepository.findById(userId)
+        User user = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다."));
 
-        List<UserActivityItemDto> activities = new ArrayList<>();
+        log.info("사용자 활동 로그 조회 시작: userId={}", userId);
 
-        for (Post post : postRepository.findByUser_IdOrderByCreatedAtDesc(userId)) {
-            activities.add(UserActivityItemDto.builder()
-                    .actionType("POST_CREATE")
-                    .targetType("POST")
-                    .targetTitle(post.getTitle())
-                    .description("글 작성: " + abbreviate(post.getContent(), 40))
-                    .occurredAt(post.getCreatedAt() != null ? post.getCreatedAt().toString() : null)
-                    .build());
-
-            if ("DELETED".equalsIgnoreCase(post.getStatus()) && post.getDeletedAt() != null) {
-                activities.add(UserActivityItemDto.builder()
-                        .actionType("POST_DELETE")
-                        .targetType("POST")
-                        .targetTitle(post.getTitle())
-                        .description("글 삭제: " + abbreviate(post.getContent(), 40))
-                        .occurredAt(post.getDeletedAt().toString())
-                        .build());
-            }
-        }
-
-        for (Comment comment : commentRepository.findByUser_IdOrderByCreatedAtDesc(userId)) {
-            String commentTitle = comment.getPost() != null ? comment.getPost().getTitle() : null;
-
-            activities.add(UserActivityItemDto.builder()
-                    .actionType("COMMENT_CREATE")
-                    .targetType("COMMENT")
-                    .targetTitle(commentTitle)
-                    .description("댓글 작성: " + abbreviate(comment.getContent(), 40))
-                    .occurredAt(comment.getCreatedAt() != null ? comment.getCreatedAt().toString() : null)
-                    .build());
-
-            if ("DELETED".equalsIgnoreCase(comment.getStatus()) && comment.getDeletedAt() != null) {
-                activities.add(UserActivityItemDto.builder()
-                        .actionType("COMMENT_DELETE")
-                        .targetType("COMMENT")
-                        .targetTitle(commentTitle)
-                        .description("댓글 삭제: " + abbreviate(comment.getContent(), 40))
-                        .occurredAt(comment.getDeletedAt().toString())
-                        .build());
-            }
-        }
-
-        for (PostLike postLike : postLikeRepository.findByUser_IdOrderByCreatedAtDesc(userId)) {
-            activities.add(UserActivityItemDto.builder()
-                    .actionType("POST_LIKE")
-                    .targetType("POST")
-                    .targetTitle(postLike.getPost() != null ? postLike.getPost().getTitle() : null)
-                    .description("글 추천")
-                    .occurredAt(postLike.getCreatedAt() != null ? postLike.getCreatedAt().toString() : null)
-                    .build());
-        }
-
-        for (Order order : orderRepository.findByAccount_User_IdOrderByOrderedAtDesc(userId)) {
-            String stockName = order.getStock() != null ? order.getStock().getStockName() : null;
-            String orderSide = "SELL".equalsIgnoreCase(order.getOrderSide()) ? "매도" : "매수";
-            String quantityText = order.getQuantity() != null ? order.getQuantity() + "주" : "";
-
-            activities.add(UserActivityItemDto.builder()
-                    .actionType("ORDER_" + order.getOrderSide())
-                    .targetType("ORDER")
-                    .targetTitle(stockName)
-                    .description(orderSide + " " + quantityText)
-                    .occurredAt(order.getOrderedAt() != null ? order.getOrderedAt().toString() : null)
-                    .build());
-        }
-
-        return activities.stream()
-                .filter(activity -> activity.getOccurredAt() != null)
-                .sorted(Comparator.comparing(UserActivityItemDto::getOccurredAt).reversed())
+        List<UserActivityItemDto> activities = readLogFiles()
+                .map(this::parseLine)
+                .flatMap(java.util.Optional::stream)
+                .filter(item -> String.valueOf(userId).equals(item.userId()))
+                .sorted(Comparator.comparing(ParsedActivity::occurredAt).reversed())
+                .map(item -> toDto(item, user))
                 .toList();
+
+        log.info("사용자 활동 로그 조회 완료: userId={}, activityCount={}", userId, activities.size());
+        return activities;
     }
 
-    private String abbreviate(String value, int maxLength) {
-        if (value == null || value.isBlank()) {
+    private Stream<String> readLogFiles() {
+        Path logDir = Paths.get("logs");
+        if (!Files.exists(logDir)) {
+            return Stream.empty();
+        }
+
+        try {
+            return Files.list(logDir)
+                    .filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().startsWith("user-activity"))
+                    .sorted(Comparator.comparing(Path::toString).reversed())
+                    .flatMap(this::readLinesSafely);
+        } catch (IOException e) {
+            log.warn("사용자 활동 로그 디렉터리 조회 실패: {}", e.getMessage());
+            return Stream.empty();
+        }
+    }
+
+    private Stream<String> readLinesSafely(Path path) {
+        try {
+            return Files.lines(path);
+        } catch (IOException e) {
+            log.warn("사용자 활동 로그 파일 읽기 실패: path={}, reason={}", path, e.getMessage());
+            return Stream.empty();
+        }
+    }
+
+    private java.util.Optional<ParsedActivity> parseLine(String line) {
+        Matcher matcher = LOG_LINE_PATTERN.matcher(line);
+        if (!matcher.matches()) {
+            return java.util.Optional.empty();
+        }
+
+        try {
+            return java.util.Optional.of(new ParsedActivity(
+                    matcher.group("userId").trim(),
+                    matcher.group("userEmail").trim(),
+                    matcher.group("action").trim(),
+                    matcher.group("targetType").trim(),
+                    matcher.group("targetId").trim(),
+                    matcher.group("detail").trim(),
+                    LocalDateTime.parse(matcher.group("timestamp"), LOG_TIMESTAMP_FORMAT)
+            ));
+        } catch (DateTimeParseException e) {
+            log.warn("사용자 활동 로그 시간 파싱 실패: {}", line);
+            return java.util.Optional.empty();
+        }
+    }
+
+    private UserActivityItemDto toDto(ParsedActivity activity, User user) {
+        return UserActivityItemDto.builder()
+                .actionType(activity.action())
+                .actionLabel(toActionLabel(activity.action()))
+                .targetType(activity.targetType())
+                .targetId(activity.targetId())
+                .postId(resolvePostId(activity))
+                .targetLabel(toTargetLabel(activity.targetType(), activity.targetId()))
+                .detail(toDetailLabel(activity.action(), activity.detail(), user))
+                .occurredAt(activity.occurredAt().toString())
+                .build();
+    }
+
+    private Long resolvePostId(ParsedActivity activity) {
+        if ("POST".equals(activity.targetType())) {
+            try {
+                return Long.parseLong(activity.targetId());
+            } catch (NumberFormatException e) {
+                return null;
+            }
+        }
+
+        if ("COMMENT".equals(activity.targetType())) {
+            try {
+                Long commentId = Long.parseLong(activity.targetId());
+                return commentRepository.findById(commentId)
+                        .map(comment -> comment.getPost() != null ? comment.getPost().getId() : null)
+                        .orElse(null);
+            } catch (NumberFormatException e) {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    private String toActionLabel(String action) {
+        return switch (action) {
+            case "LOGIN" -> "로그인";
+            case "LOGOUT" -> "로그아웃";
+            case "POST_CREATE" -> "게시글 작성";
+            case "POST_UPDATE" -> "게시글 수정";
+            case "POST_DELETE" -> "게시글 삭제";
+            case "COMMENT_CREATE" -> "댓글 작성";
+            case "COMMENT_DELETE" -> "댓글 삭제";
+            case "POST_LIKE" -> "게시글 추천";
+            case "INQUIRY_CREATE" -> "문의 작성";
+            case "INQUIRY_REPLY" -> "문의 답변";
+            case "INQUIRY_READ" -> "문의 확인";
+            case "REPORT_CREATE" -> "신고 접수";
+            case "NOTIFICATION_CREATE" -> "알림 생성";
+            case "NOTIFICATION_READ" -> "알림 확인";
+            default -> action;
+        };
+    }
+
+    private String toTargetLabel(String targetType, String targetId) {
+        String normalizedType = switch (targetType) {
+            case "USER" -> "사용자";
+            case "INQUIRY" -> "문의";
+            case "POST" -> "게시글";
+            case "COMMENT" -> "댓글";
+            case "NOTIFICATION" -> "알림";
+            default -> targetType;
+        };
+
+        if (targetId == null || targetId.isBlank() || "-".equals(targetId)) {
+            return normalizedType;
+        }
+
+        return normalizedType + " #" + targetId;
+    }
+
+    private String toDetailLabel(String action, String detail, User user) {
+        if (detail == null || detail.isBlank() || "-".equals(detail)) {
             return "-";
         }
 
-        String normalized = value
-                .replaceAll("<[^>]*>", " ")
-                .replaceAll("&nbsp;", " ")
-                .replaceAll("\\s+", " ")
-                .trim();
-        if (normalized.length() <= maxLength) {
-            return normalized;
+        if ("INQUIRY_CREATE".equals(action)) {
+            String[] parts = detail.split(":", 2);
+            if (parts.length == 2) {
+                return "카테고리 " + parts[0] + " / 제목 " + parts[1];
+            }
         }
 
-        return normalized.substring(0, maxLength) + "...";
+        if ("POST_CREATE".equals(action) || "POST_UPDATE".equals(action) || "POST_DELETE".equals(action)) {
+            return detail;
+        }
+
+        if ("COMMENT_CREATE".equals(action) || "COMMENT_DELETE".equals(action)) {
+            return detail;
+        }
+
+        if ("POST_LIKE".equals(action)) {
+            return "게시글 추천 " + detail;
+        }
+
+        if ("INQUIRY_REPLY".equals(action) && detail.startsWith("answered_by_admin=")) {
+            return "관리자 답변 등록";
+        }
+
+        if ("REPORT_CREATE".equals(action) && detail.startsWith("reason=")) {
+            return "사유 " + detail.substring("reason=".length());
+        }
+
+        if ("NOTIFICATION_CREATE".equals(action)) {
+            return detail.replace("type=", "유형 ").replace(", title=", " / 제목 ");
+        }
+
+        if ("LOGIN".equals(action) && detail.startsWith("role=")) {
+            return user.getNickname() + " 계정 로그인";
+        }
+
+        if ("LOGOUT".equals(action)) {
+            return "클라이언트 로그아웃";
+        }
+
+        if ("INQUIRY_READ".equals(action)) {
+            return "문의 답변 확인";
+        }
+
+        if ("NOTIFICATION_READ".equals(action)) {
+            return "mark_all_as_read".equals(detail) ? "알림 전체 읽음" : "알림 읽음";
+        }
+
+        return detail;
+    }
+
+    private record ParsedActivity(
+            String userId,
+            String userEmail,
+            String action,
+            String targetType,
+            String targetId,
+            String detail,
+            LocalDateTime occurredAt
+    ) {
     }
 }

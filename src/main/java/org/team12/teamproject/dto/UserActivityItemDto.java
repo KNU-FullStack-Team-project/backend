@@ -7,8 +7,11 @@ import lombok.Getter;
 @Builder
 public class UserActivityItemDto {
     private String actionType;
+    private String actionLabel;
     private String targetType;
-    private String targetTitle;
-    private String description;
+    private String targetId;
+    private Long postId;
+    private String targetLabel;
+    private String detail;
     private String occurredAt;
 }

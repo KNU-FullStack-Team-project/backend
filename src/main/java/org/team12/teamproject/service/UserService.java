@@ -47,6 +47,7 @@ public class UserService {
     private final JdbcTemplate jdbcTemplate;
     private final JwtUtil jwtUtil;
     private final RecaptchaService recaptchaService;
+    private final UserActivityAuditLogger userActivityAuditLogger;
 
     private final Map<String, Integer> loginFailureCounts = new ConcurrentHashMap<>();
 
@@ -180,6 +181,15 @@ public class UserService {
         String token = jwtUtil.generateToken(user.getEmail(), user.getRole());
         List<Account> accounts = accountRepository.findByUserId(user.getId());
         Long accountId = accounts.isEmpty() ? null : accounts.get(0).getId();
+
+        userActivityAuditLogger.log(
+                user.getId(),
+                user.getEmail(),
+                "LOGIN",
+                "USER",
+                String.valueOf(user.getId()),
+                "role=" + user.getRole()
+        );
 
         return new LoginResponseDto(
                 user.getId(),
@@ -541,5 +551,18 @@ public class UserService {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다."));
         return jwtUtil.generateToken(user.getEmail(), user.getRole());
+    }
+    public void logout(String email) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("?ъ슜?먮? 李얠쓣 ???놁뒿?덈떎."));
+
+        userActivityAuditLogger.log(
+                user.getId(),
+                user.getEmail(),
+                "LOGOUT",
+                "USER",
+                String.valueOf(user.getId()),
+                "client_logout"
+        );
     }
 }

@@ -62,6 +62,7 @@ public class CommunityService {
     private final PostReportRepository postReportRepository;
     private final CommentReportRepository commentReportRepository;
     private final PostAttachmentRepository postAttachmentRepository;
+    private final UserActivityAuditLogger userActivityAuditLogger;
 
     private static final String STOCK_DISCUSSION_BOARD_CODE = "STOCK_DISCUSSION";
 
@@ -176,18 +177,28 @@ public class CommunityService {
         finalizeTempAttachments(savedPost, user);
         syncAttachments(savedPost, user, request.getAttachmentIds(), false);
 
+        userActivityAuditLogger.log(
+                user.getId(),
+                user.getEmail(),
+                "POST_CREATE",
+                "POST",
+                String.valueOf(savedPost.getId()),
+                abbreviateForLog(savedPost.getTitle()) + " | " + abbreviateForLog(savedPost.getContent())
+        );
+
         return savedPost.getId();
     }
 
     @Transactional(readOnly = true)
-    public CommunityPostDetailResponseDto getPostDetail(Long postId, String email) {
-        Post post = postRepository.findByIdAndStatus(postId, "NORMAL")
+    public CommunityPostDetailResponseDto getPostDetail(Long postId, String email, boolean isAdmin) {
+        Post post = (isAdmin ? postRepository.findById(postId) : postRepository.findByIdAndStatus(postId, "NORMAL"))
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 게시글입니다."));
 
         Stock stock = post.getStock();
 
-        List<CommunityCommentResponseDto> comments = commentRepository
-                .findByPostIdAndStatusOrderByCreatedAtAsc(postId, "NORMAL")
+        List<CommunityCommentResponseDto> comments = (isAdmin
+                ? commentRepository.findByPostIdOrderByCreatedAtAsc(postId)
+                : commentRepository.findByPostIdAndStatusOrderByCreatedAtAsc(postId, "NORMAL"))
                 .stream()
                 .map(comment -> CommunityCommentResponseDto.builder()
                         .commentId(comment.getId())
@@ -273,6 +284,14 @@ public class CommunityService {
 
         postLikeRepository.save(postLike);
         post.increaseLikeCount();
+        userActivityAuditLogger.log(
+                user.getId(),
+                user.getEmail(),
+                "POST_LIKE",
+                "POST",
+                String.valueOf(post.getId()),
+                abbreviateForLog(post.getTitle())
+        );
     }
 
     @Transactional
@@ -298,7 +317,16 @@ public class CommunityService {
                 .build();
 
         post.increaseCommentCount();
-        return commentRepository.save(comment).getId();
+        Long commentId = commentRepository.save(comment).getId();
+        userActivityAuditLogger.log(
+                user.getId(),
+                user.getEmail(),
+                "COMMENT_CREATE",
+                "COMMENT",
+                String.valueOf(commentId),
+                abbreviateForLog(comment.getContent())
+        );
+        return commentId;
     }
 
     @Transactional(readOnly = true)
@@ -340,6 +368,14 @@ public class CommunityService {
 
         finalizeTempAttachments(post, loginUser);
         syncAttachments(post, loginUser, request.getAttachmentIds(), true);
+        userActivityAuditLogger.log(
+                loginUser.getId(),
+                loginUser.getEmail(),
+                "POST_UPDATE",
+                "POST",
+                String.valueOf(post.getId()),
+                abbreviateForLog(post.getTitle()) + " | " + abbreviateForLog(post.getContent())
+        );
     }
 
     @Transactional
@@ -356,6 +392,14 @@ public class CommunityService {
             throw new IllegalArgumentException("본인 게시글만 삭제할 수 있습니다.");
         }
 
+        userActivityAuditLogger.log(
+                loginUser.getId(),
+                loginUser.getEmail(),
+                "POST_DELETE",
+                "POST",
+                String.valueOf(post.getId()),
+                abbreviateForLog(post.getTitle()) + " | " + abbreviateForLog(post.getContent())
+        );
         post.softDelete();
     }
 
@@ -374,6 +418,14 @@ public class CommunityService {
         }
 
         Post post = comment.getPost();
+        userActivityAuditLogger.log(
+                loginUser.getId(),
+                loginUser.getEmail(),
+                "COMMENT_DELETE",
+                "COMMENT",
+                String.valueOf(comment.getId()),
+                abbreviateForLog(comment.getContent())
+        );
         comment.softDelete();
         post.decreaseCommentCount();
     }
@@ -408,6 +460,15 @@ public class CommunityService {
 
         postReportRepository.save(postReport);
         post.increaseReportCount();
+
+        userActivityAuditLogger.log(
+                reporter.getId(),
+                reporter.getEmail(),
+                "REPORT_CREATE",
+                "POST",
+                String.valueOf(postId),
+                "reason=" + request.getReason().trim()
+        );
     }
 
     @Transactional
@@ -439,6 +500,15 @@ public class CommunityService {
                 .build();
 
         commentReportRepository.save(commentReport);
+
+        userActivityAuditLogger.log(
+                reporter.getId(),
+                reporter.getEmail(),
+                "REPORT_CREATE",
+                "COMMENT",
+                String.valueOf(commentId),
+                "reason=" + request.getReason().trim()
+        );
     }
 
     private void validateReportReason(CommunityReportRequestDto request) {
@@ -611,6 +681,23 @@ public class CommunityService {
                         "COMPLETED"
                 ) == 1;
     }
+
+    private String abbreviateForLog(String value) {
+        if (value == null || value.isBlank()) {
+            return "-";
+        }
+
+        String normalized = value.replaceAll("<[^>]*>", " ")
+                .replaceAll("&nbsp;", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+
+        if (normalized.length() <= 60) {
+            return normalized;
+        }
+
+        return normalized.substring(0, 60) + "...";
+    }
     @Transactional(readOnly = true)
 public List<CommunityPostResponseDto> getFreePosts() {
 
@@ -664,6 +751,15 @@ public Long createFreePost(CommunityPostCreateRequestDto request, String email) 
 
     finalizeTempAttachments(savedPost, user);
     syncAttachments(savedPost, user, request.getAttachmentIds(), false);
+
+    userActivityAuditLogger.log(
+            user.getId(),
+            user.getEmail(),
+            "POST_CREATE",
+            "POST",
+            String.valueOf(savedPost.getId()),
+            abbreviateForLog(savedPost.getTitle()) + " | " + abbreviateForLog(savedPost.getContent())
+    );
 
     return savedPost.getId();
 }
