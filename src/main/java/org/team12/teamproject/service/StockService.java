@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.*;
 import java.util.stream.Collectors;
@@ -97,11 +98,22 @@ public class StockService {
 
                     // Rate Limit 적용 후 통신
                     StockResponseDto latest = fetchPriceFromKisApi(task.symbol);
-                    if (latest != null) {
+                    // [수정] API 호출 결과가 유효할 때만 저장 및 전파 (0원 오염 방지)
+                    if (latest != null && latest.getCurrentPrice() != null && !"0".equals(latest.getCurrentPrice())) {
                         saveToRedis(latest);
+                        // DB의 volume 필드도 즉시 동기화 (필터링 및 정렬용)
+                        try {
+                            long vol = Long.parseLong(latest.getVolume());
+                            stockRepository.updateStockVolume(task.symbol, vol);
+                        } catch (Exception e) {
+                            log.warn("DB 거래량 업데이트 실패 ({}): {}", task.symbol, e.getMessage());
+                        }
+                        
                         if (task.priority <= 2) {
                             eventPublisher.publishEvent(new PriceUpdateEvent(this, task.symbol, new BigDecimal(latest.getCurrentPrice())));
                         }
+                    } else {
+                        log.debug("정상적인 시세 데이터를 가져오지 못함 ({}). 기존 데이터를 유지합니다.", task.symbol);
                     }
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
@@ -199,15 +211,19 @@ public class StockService {
                     }
                 }
 
-                // 레디스에 데이터가 없는 경우: API를 즉시 호출하지 않고 일단 0원으로 반환 + 우선순위 큐(1단계)에 등록
-                builder.currentPrice("0")
-                       .changeAmount("0")
-                       .changeRate("0")
-                       .volume("0")
-                       .basePrice("0");
-                content.add(builder.build());
+                // [최적화] Redis에 데이터가 없는 경우: DB에 저장된 마지막 시세(Last Known Price)를 반환
+                if (stock.getCurrentPrice() != null) {
+                    builder.currentPrice(stock.getCurrentPrice().toString())
+                           .changeAmount(stock.getChangeAmount() != null ? stock.getChangeAmount().toString() : "0")
+                           .changeRate(stock.getChangeRate() != null ? stock.getChangeRate().toString() : "0")
+                           .volume(stock.getVolume() != null ? stock.getVolume().toString() : "0")
+                           .basePrice(stock.getCurrentPrice().toString()); // Fallback으로 현재가 사용
+                } else {
+                    // DB에도 없으면 0원 반환
+                    builder.currentPrice("0").changeAmount("0").changeRate("0").volume("0").basePrice("0");
+                }
                 
-                // 프론트에서 빈 값이 보일 경우, 워커가 신속하게 가져오도록 최상위 우선순위 부여
+                content.add(builder.build());
                 enqueueUpdate(stock.getStockCode(), 1);
             }
         } catch (Exception e) {
@@ -287,6 +303,68 @@ public class StockService {
     }
 
     /**
+     * 주식 상세 일괄 조회 (Redis Multi-Get 및 DB 일괄 조회로 최적화)
+     */
+    public List<StockResponseDto> getStockDetails(List<String> stockCodes) {
+        if (stockCodes == null || stockCodes.isEmpty()) return new ArrayList<>();
+
+        // 1. Redis 일괄 조회
+        List<String> keys = stockCodes.stream()
+                .map(code -> "stock:price:" + code)
+                .collect(Collectors.toList());
+        List<String> cachedValues = redisTemplate.opsForValue().multiGet(keys);
+        
+        // 2. DB에서 종목 정보 일괄 조회 (이름 및 백업 시세용)
+        List<Stock> stocksInDb = stockRepository.findAllByStockCodeIn(stockCodes);
+        Map<String, Stock> stockMap = stocksInDb.stream()
+                .collect(Collectors.toMap(Stock::getStockCode, s -> s));
+
+        List<StockResponseDto> results = new ArrayList<>();
+
+        for (int i = 0; i < stockCodes.size(); i++) {
+            String code = stockCodes.get(i);
+            String cachedData = (cachedValues != null && i < cachedValues.size()) ? cachedValues.get(i) : null;
+            
+            Stock stock = stockMap.get(code);
+            String stockName = (stock != null) ? stock.getStockName() : "이름없음";
+
+            StockResponseDto.StockResponseDtoBuilder builder = StockResponseDto.builder()
+                    .symbol(code)
+                    .name(stockName);
+
+            if (cachedData != null) {
+                String[] parts = cachedData.split(":");
+                if (parts.length >= 5) {
+                    results.add(builder
+                            .currentPrice(parts[0])
+                            .changeAmount(parts[1])
+                            .changeRate(parts[2])
+                            .volume(parts[3])
+                            .basePrice(parts[4])
+                            .build());
+                    continue;
+                }
+            }
+            
+            // 3. [최적화] Redis 캐시 부재 시 DB Fallback 적용
+            if (stock != null && stock.getCurrentPrice() != null) {
+                results.add(builder
+                        .currentPrice(stock.getCurrentPrice().toString())
+                        .changeAmount(stock.getChangeAmount() != null ? stock.getChangeAmount().toString() : "0")
+                        .changeRate(stock.getChangeRate() != null ? stock.getChangeRate().toString() : "0")
+                        .volume(stock.getVolume() != null ? stock.getVolume().toString() : "0")
+                        .basePrice(stock.getCurrentPrice().toString())
+                        .build());
+            } else {
+                results.add(builder.currentPrice("0").changeAmount("0").changeRate("0").volume("0").basePrice("0").build());
+            }
+
+            enqueueUpdate(code, 1);
+        }
+        return results;
+    }
+
+    /**
      * 주식 상세 조회 (가격 포함)
      */
     public StockResponseDto getStockDetail(String stockCode) {
@@ -317,10 +395,27 @@ public class StockService {
             log.warn("Redis 캐시 파싱 실패 ({}): {}", cacheKey, e.getMessage());
             try {
                 redisTemplate.delete(cacheKey);
-            } catch (Exception ignore) {
-            }
+            } catch (Exception ignore) {}
         }
 
+        // [최적화] Redis 캐시가 없는 경우 DB 최신 가격(백업)을 즉시 반환하여 '시세 확인 중' 방지
+        Optional<Stock> stockOpt = stockRepository.findByStockCode(stockCode);
+        if (stockOpt.isPresent() && stockOpt.get().getCurrentPrice() != null) {
+            Stock s = stockOpt.get();
+            // 백그라운드 업데이트 예약만 하고 DB 값을 즉시 반환
+            enqueueUpdate(stockCode, 1);
+            return StockResponseDto.builder()
+                    .symbol(stockCode)
+                    .name(s.getStockName())
+                    .currentPrice(s.getCurrentPrice().toString())
+                    .changeAmount(s.getChangeAmount() != null ? s.getChangeAmount().toString() : "0")
+                    .changeRate(s.getChangeRate() != null ? s.getChangeRate().toString() : "0")
+                    .volume(s.getVolume() != null ? s.getVolume().toString() : "0")
+                    .basePrice(s.getCurrentPrice().toString())
+                    .build();
+        }
+
+        // DB에도 정보가 없는 완전 초기 상황에서만 API 실시간 호출 진행
         StockResponseDto dto = fetchPriceFromKisApi(stockCode);
 
         if (dto == null) {
@@ -388,7 +483,7 @@ public class StockService {
     }
 
     public List<StockCandleDto> getStockHistory(String symbol, String period, boolean forceFetch) {
-        String cacheKey = "stock:history:v3:" + symbol + ":" + period;
+        String cacheKey = "stock:history:v4:" + symbol + ":" + period;
 
         if (!forceFetch) {
             try {
@@ -418,15 +513,15 @@ public class StockService {
                 String startDate;
 
                 if ("1W".equals(period)) {
-                    startDate = now.minusDays(30).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                    startDate = now.minusDays(200).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else if ("1M".equals(period)) {
-                    startDate = now.minusDays(31).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                    startDate = now.minusDays(200).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else if ("6M".equals(period)) {
                     periodCode = "M";
                     startDate = now.minusMonths(6).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else if ("1Y".equals(period)) {
-                    periodCode = "D"; // 연도 차트도 상세 조회를 위해 일봉(D)으로 변경
-                    startDate = now.minusYears(1).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                    periodCode = "D"; 
+                    startDate = now.minusYears(2).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else {
                     startDate = now.minusDays(30).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 }
@@ -491,8 +586,8 @@ public class StockService {
         try {
             ensureAccessToken();
 
-            // 최대 2회 호출하여 당일 데이터의 최근 구간들을 충분히 확보 (백그라운드 부하 방지 및 1.2초 내 응답)
-            for (int i = 0; i < 2; i++) {
+            // 최대 5회 호출하여 최근 구간들을 대량 확보 (약 500개 봉, 1주일치 분봉 데이터)
+            for (int i = 0; i < 5; i++) {
                 String url = apiUrl + "/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
                         + "?FID_COND_MRKT_DIV_CODE=J"
                         + "&FID_INPUT_ISCD=" + symbol
@@ -609,6 +704,17 @@ public class StockService {
                 dto.getVolume(),
                 dto.getBasePrice());
         redisTemplate.opsForValue().set(cacheKey, value, Duration.ofMinutes(30));
+        
+        // [중요] DB의 시세 정보도 비동기적으로 업데이트하여 Fallback 시스템 유지
+        try {
+            BigDecimal price = new BigDecimal(dto.getCurrentPrice().replace(",", ""));
+            BigDecimal rate = new BigDecimal(dto.getChangeRate().replace(",", ""));
+            BigDecimal amt = new BigDecimal(dto.getChangeAmount().replace(",", ""));
+            long vol = Long.parseLong(dto.getVolume());
+            stockRepository.updateStockPriceInfo(dto.getSymbol(), price, rate, amt, vol);
+        } catch (Exception e) {
+            log.warn("DB 시세 업데이트 실패 ({}): {}", dto.getSymbol(), e.getMessage());
+        }
     }
 
     private void ensureAccessToken() {
@@ -637,11 +743,13 @@ public class StockService {
         try {
             ensureAccessToken();
 
+            // [최적화] 시장 구분 코드 처리 (기본: J)
+            String marketDiv = "J"; 
+            
             String url = apiUrl
-                    + "/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD="
-                    + stockCode;
-            log.info("KIS API 요청 URL: {}", url);
-
+                    + "/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=" + marketDiv 
+                    + "&FID_INPUT_ISCD=" + stockCode;
+            
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             headers.set("authorization", "Bearer " + cachedAccessToken);
@@ -654,47 +762,40 @@ public class StockService {
             enforceApiRateLimit();
             ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
             
-            log.info("KIS API 응답: {}", response.getBody());
+            Map<String, Object> body = response.getBody();
+            if (body != null && "0".equals(String.valueOf(body.get("rt_cd")))) {
+                Map<String, Object> output = (Map<String, Object>) body.get("output");
+                if (output != null) {
+                    String currentPrice = (String) output.get("stck_prpr");
+                    
+                    if (currentPrice != null) {
+                        String stockName = stockRepository.findByStockCode(stockCode)
+                                .map(Stock::getStockName)
+                                .orElse("\uC774\uB984\uC5C6\uC74C");
 
-            if (response.getBody() != null && response.getBody().containsKey("output")) {
-                Map<String, Object> output = (Map<String, Object>) response.getBody().get("output");
-
-                String stockName = stockRepository.findByStockCode(stockCode)
-                        .map(Stock::getStockName)
-                        .orElse("이름없음");
-
-                return StockResponseDto.builder()
-                        .symbol(stockCode)
-                        .name(stockName)
-                        .currentPrice((String) output.get("stck_prpr"))
-                        .changeAmount((String) output.get("prdy_vrss"))
-                        .changeRate((String) output.get("prdy_ctrt"))
-                        .volume((String) output.get("acml_vol"))
-                        .basePrice((String) output.get("stck_sdpr"))
-                        .build();
+                        return StockResponseDto.builder()
+                                .symbol(stockCode)
+                                .name(stockName)
+                                .currentPrice(currentPrice)
+                                .changeAmount((String) output.get("prdy_vrss"))
+                                .changeRate((String) output.get("prdy_ctrt"))
+                                .volume((String) output.get("acml_vol"))
+                                .basePrice((String) output.get("stck_sdpr"))
+                                .build();
+                    }
+                }
+            } else if (body != null) {
+                log.warn("KIS API 시세 조회 실패 ({}): {} - {}", stockCode, body.get("rt_cd"), body.get("msg1"));
             }
         } catch (org.springframework.web.client.HttpClientErrorException.Unauthorized e) {
-            log.warn("KIS 토큰 만료 또는 무효(401). 토큰 재발급 후 재시도합니다.");
+            log.warn("KIS 토큰 만료(401). 재발급 후 재시도.");
             clearTokenCache();
             return fetchPriceFromKisApi(stockCode);
         } catch (Exception e) {
-            log.error("KIS API 호출 중 오류 발생: {}", e.getMessage());
+            log.error("KIS API 호출 에러 ({}): {}", stockCode, e.getMessage());
         }
 
-        // API 호출 실패 시 최소한의 정보를 담은 DTO 반환
-        String stockName = stockRepository.findByStockCode(stockCode)
-                .map(Stock::getStockName)
-                .orElse("이름없음");
-
-        return StockResponseDto.builder()
-                .symbol(stockCode)
-                .name(stockName)
-                .currentPrice("0")
-                .changeAmount("0")
-                .changeRate("0")
-                .volume("0")
-                .basePrice("0")
-                .build();
+        return null; // 실패 시 null 반환하여 기존 데이터 보호
     }
 
     /**

@@ -40,7 +40,7 @@ public class UserActivityService {
                     .actionType("POST_CREATE")
                     .targetType("POST")
                     .targetTitle(post.getTitle())
-                    .description("글 작성")
+                    .description("글 작성: " + abbreviate(post.getContent(), 40))
                     .occurredAt(post.getCreatedAt() != null ? post.getCreatedAt().toString() : null)
                     .build());
 
@@ -49,7 +49,7 @@ public class UserActivityService {
                         .actionType("POST_DELETE")
                         .targetType("POST")
                         .targetTitle(post.getTitle())
-                        .description("글 삭제")
+                        .description("글 삭제: " + abbreviate(post.getContent(), 40))
                         .occurredAt(post.getDeletedAt().toString())
                         .build());
             }
@@ -62,7 +62,7 @@ public class UserActivityService {
                     .actionType("COMMENT_CREATE")
                     .targetType("COMMENT")
                     .targetTitle(commentTitle)
-                    .description("댓글 작성")
+                    .description("댓글 작성: " + abbreviate(comment.getContent(), 40))
                     .occurredAt(comment.getCreatedAt() != null ? comment.getCreatedAt().toString() : null)
                     .build());
 
@@ -71,7 +71,7 @@ public class UserActivityService {
                         .actionType("COMMENT_DELETE")
                         .targetType("COMMENT")
                         .targetTitle(commentTitle)
-                        .description("댓글 삭제")
+                        .description("댓글 삭제: " + abbreviate(comment.getContent(), 40))
                         .occurredAt(comment.getDeletedAt().toString())
                         .build());
             }
@@ -105,5 +105,22 @@ public class UserActivityService {
                 .filter(activity -> activity.getOccurredAt() != null)
                 .sorted(Comparator.comparing(UserActivityItemDto::getOccurredAt).reversed())
                 .toList();
+    }
+
+    private String abbreviate(String value, int maxLength) {
+        if (value == null || value.isBlank()) {
+            return "-";
+        }
+
+        String normalized = value
+                .replaceAll("<[^>]*>", " ")
+                .replaceAll("&nbsp;", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        if (normalized.length() <= maxLength) {
+            return normalized;
+        }
+
+        return normalized.substring(0, maxLength) + "...";
     }
 }

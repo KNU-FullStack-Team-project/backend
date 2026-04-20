@@ -52,14 +52,16 @@ public class OrderService {
 
         StockResponseDto stockDetail = stockService.getStockDetail(stockCode);
         String currentPriceStr = stockDetail.getCurrentPrice();
-        
+
         // 실시간 현재가가 없거나 "0"인 경우 (장마감 후 등), 기준가(전일 종가)를 fallback으로 사용
-        if (currentPriceStr == null || "null".equals(currentPriceStr) || "0".equals(currentPriceStr) || currentPriceStr.trim().isEmpty()) {
+        if (currentPriceStr == null || "null".equals(currentPriceStr) || "0".equals(currentPriceStr)
+                || currentPriceStr.trim().isEmpty()) {
             log.info("[OrderService] 현재가를 불러올 수 없어 기준가(전일 종가)를 사용합니다. 종목: {}", stockCode);
             currentPriceStr = stockDetail.getBasePrice();
         }
 
-        if (currentPriceStr == null || "null".equals(currentPriceStr) || "0".equals(currentPriceStr) || currentPriceStr.trim().isEmpty()) {
+        if (currentPriceStr == null || "null".equals(currentPriceStr) || "0".equals(currentPriceStr)
+                || currentPriceStr.trim().isEmpty()) {
             throw new IllegalArgumentException("해당 종목의 가격 정보를 외부(KIS)에서 불러오지 못하여 매수할 수 없습니다.");
         }
 
@@ -67,7 +69,7 @@ public class OrderService {
         BigDecimal totalAmount = currentPrice.multiply(BigDecimal.valueOf(quantity));
 
         account.deductBalance(totalAmount);
-        
+
         // stock을 DB에 확실히 반영하여 외래키 제약 오류(ORA-02291) 방지
         stockRepository.saveAndFlush(stock);
 
@@ -82,7 +84,7 @@ public class OrderService {
                 .orderStatus("QUEUED")
                 .orderedAt(LocalDateTime.now())
                 .build();
-        
+
         orderRepository.saveAndFlush(order);
 
         // 시장가 주문은 큐를 거치지 않고 즉시 체결 처리
@@ -110,12 +112,14 @@ public class OrderService {
         String currentPriceStr = stockDetail.getCurrentPrice();
 
         // 실시간 현재가가 없거나 "0"인 경우, 기준가(전일 종가)를 fallback으로 사용
-        if (currentPriceStr == null || "null".equals(currentPriceStr) || "0".equals(currentPriceStr) || currentPriceStr.trim().isEmpty()) {
+        if (currentPriceStr == null || "null".equals(currentPriceStr) || "0".equals(currentPriceStr)
+                || currentPriceStr.trim().isEmpty()) {
             log.info("[OrderService] 현재가를 불러올 수 없어 기준가(전일 종가)를 사용합니다. 종목: {}", stockCode);
             currentPriceStr = stockDetail.getBasePrice();
         }
 
-        if (currentPriceStr == null || "null".equals(currentPriceStr) || "0".equals(currentPriceStr) || currentPriceStr.trim().isEmpty()) {
+        if (currentPriceStr == null || "null".equals(currentPriceStr) || "0".equals(currentPriceStr)
+                || currentPriceStr.trim().isEmpty()) {
             throw new IllegalArgumentException("해당 종목의 가격 정보를 외부(KIS)에서 불러오지 못하여 매도할 수 없습니다.");
         }
 
@@ -141,13 +145,15 @@ public class OrderService {
     }
 
     @Transactional
-    public Order placeLimitBuyOrder(Long accountId, String stockCode, Long quantity, BigDecimal limitPrice, String requestId) {
+    public Order placeLimitBuyOrder(Long accountId, String stockCode, Long quantity, BigDecimal limitPrice,
+            String requestId) {
         checkIdempotency(requestId);
         validateStockCode(stockCode);
-        
+
         // 주식 시장 운영 시간 검증 활성화
         // if (!MarketUtils.isMarketOpen()) {
-        //     throw new IllegalStateException("주식 시장 운영 시간(평일 09:00 ~ 15:30)에만 주문이 가능합니다.");
+        // throw new IllegalStateException("주식 시장 운영 시간(평일 09:00 ~ 15:30)에만 주문이
+        // 가능합니다.");
         // }
 
         Account account = accountRepository.findById(accountId)
@@ -160,15 +166,17 @@ public class OrderService {
             throw new IllegalArgumentException("해당 종목의 가격 정보를 불러오지 못하여 매수할 수 없습니다.");
         }
         BigDecimal currentPrice = new BigDecimal(currentPriceStr);
-        BigDecimal basePrice = (stockDetail.getBasePrice() != null && !stockDetail.getBasePrice().isEmpty()) 
-                ? new BigDecimal(stockDetail.getBasePrice()) 
+        BigDecimal basePrice = (stockDetail.getBasePrice() != null && !stockDetail.getBasePrice().isEmpty())
+                ? new BigDecimal(stockDetail.getBasePrice())
                 : currentPrice;
         BigDecimal lowerLimit = basePrice.multiply(BigDecimal.valueOf(0.7)).setScale(0, RoundingMode.FLOOR);
         BigDecimal upperLimit = basePrice.multiply(BigDecimal.valueOf(1.3)).setScale(0, RoundingMode.CEILING);
 
         // 상하한가 검증 활성화 (단, 데이터 미동기화로 인해 basePrice가 0인 경우는 제외)
-        if (basePrice.compareTo(BigDecimal.ZERO) > 0 && (limitPrice.compareTo(lowerLimit) < 0 || limitPrice.compareTo(upperLimit) > 0)) {
-            throw new IllegalArgumentException("지정가는 전일 종가(" + basePrice + ") 기준 ±30% 이내여야 합니다. (범위: " + lowerLimit + " ~ " + upperLimit + ")");
+        if (basePrice.compareTo(BigDecimal.ZERO) > 0
+                && (limitPrice.compareTo(lowerLimit) < 0 || limitPrice.compareTo(upperLimit) > 0)) {
+            throw new IllegalArgumentException(
+                    "지정가는 전일 종가(" + basePrice + ") 기준 ±30% 이내여야 합니다. (범위: " + lowerLimit + " ~ " + upperLimit + ")");
         }
 
         BigDecimal totalAmount = limitPrice.multiply(BigDecimal.valueOf(quantity));
@@ -194,13 +202,15 @@ public class OrderService {
     }
 
     @Transactional
-    public Order placeLimitSellOrder(Long accountId, String stockCode, Long quantity, BigDecimal limitPrice, String requestId) {
+    public Order placeLimitSellOrder(Long accountId, String stockCode, Long quantity, BigDecimal limitPrice,
+            String requestId) {
         checkIdempotency(requestId);
         validateStockCode(stockCode);
 
         // 주식 시장 운영 시간 검증 활성화
         // if (!MarketUtils.isMarketOpen()) {
-        //     throw new IllegalStateException("주식 시장 운영 시간(평일 09:00 ~ 15:30)에만 주문이 가능합니다.");
+        // throw new IllegalStateException("주식 시장 운영 시간(평일 09:00 ~ 15:30)에만 주문이
+        // 가능합니다.");
         // }
 
         Account account = accountRepository.findById(accountId)
@@ -220,16 +230,18 @@ public class OrderService {
             throw new IllegalArgumentException("해당 종목의 가격 정보를 불러오지 못하여 매도할 수 없습니다.");
         }
         BigDecimal currentPrice = new BigDecimal(currentPriceStr);
-        BigDecimal basePrice = (stockDetail.getBasePrice() != null && !stockDetail.getBasePrice().isEmpty()) 
-                ? new BigDecimal(stockDetail.getBasePrice()) 
+        BigDecimal basePrice = (stockDetail.getBasePrice() != null && !stockDetail.getBasePrice().isEmpty())
+                ? new BigDecimal(stockDetail.getBasePrice())
                 : currentPrice;
-                
+
         BigDecimal lowerLimit = basePrice.multiply(BigDecimal.valueOf(0.7)).setScale(0, RoundingMode.FLOOR);
         BigDecimal upperLimit = basePrice.multiply(BigDecimal.valueOf(1.3)).setScale(0, RoundingMode.CEILING);
 
         // 상하한가 검증 활성화
-        if (basePrice.compareTo(BigDecimal.ZERO) > 0 && (limitPrice.compareTo(lowerLimit) < 0 || limitPrice.compareTo(upperLimit) > 0)) {
-            throw new IllegalArgumentException("지정가는 전일 종가(" + basePrice + ") 기준 ±30% 이내여야 합니다. (범위: " + lowerLimit + " ~ " + upperLimit + ")");
+        if (basePrice.compareTo(BigDecimal.ZERO) > 0
+                && (limitPrice.compareTo(lowerLimit) < 0 || limitPrice.compareTo(upperLimit) > 0)) {
+            throw new IllegalArgumentException(
+                    "지정가는 전일 종가(" + basePrice + ") 기준 ±30% 이내여야 합니다. (범위: " + lowerLimit + " ~ " + upperLimit + ")");
         }
 
         Order order = Order.builder()
@@ -261,8 +273,9 @@ public class OrderService {
         // 1. 매수 체결 확인 (ZSet에서 score >= currentPrice인 주문 조회)
         // 사용자가 설정한 '지정가'가 '현재가'보다 크거나 같으면 (더 싼 가격이므로) 체결
         String buyKey = "orders:pending:buy:" + stockCode;
-        java.util.Set<String> matchingBuys = redisTemplate.opsForZSet().rangeByScore(buyKey, currentPrice.doubleValue(), Double.MAX_VALUE);
-        
+        java.util.Set<String> matchingBuys = redisTemplate.opsForZSet().rangeByScore(buyKey, currentPrice.doubleValue(),
+                Double.MAX_VALUE);
+
         if (matchingBuys != null) {
             for (String orderIdStr : matchingBuys) {
                 Long orderId = Long.parseLong(orderIdStr);
@@ -274,8 +287,9 @@ public class OrderService {
         // 2. 매도 체결 확인 (ZSet에서 score <= currentPrice인 주문 조회)
         // 사용자가 설정한 '지정가'가 '현재가'보다 작거나 같으면 (더 비싼 가격에 파는 것이므로) 체결
         String sellKey = "orders:pending:sell:" + stockCode;
-        java.util.Set<String> matchingSells = redisTemplate.opsForZSet().rangeByScore(sellKey, 0, currentPrice.doubleValue());
-        
+        java.util.Set<String> matchingSells = redisTemplate.opsForZSet().rangeByScore(sellKey, 0,
+                currentPrice.doubleValue());
+
         if (matchingSells != null) {
             for (String orderIdStr : matchingSells) {
                 Long orderId = Long.parseLong(orderIdStr);
@@ -299,7 +313,8 @@ public class OrderService {
         }
 
         if ("MARKET_BUY".equals(type)) {
-            Holding holding = holdingRepository.findByAccountIdAndStockId(order.getAccount().getId(), order.getStock().getId())
+            Holding holding = holdingRepository
+                    .findByAccountIdAndStockId(order.getAccount().getId(), order.getStock().getId())
                     .orElseGet(() -> Holding.builder()
                             .account(order.getAccount())
                             .stock(order.getStock())
@@ -307,7 +322,7 @@ public class OrderService {
                             .averageBuyPrice(BigDecimal.ZERO)
                             .updatedAt(LocalDateTime.now())
                             .build());
-            
+
             holding.addQuantity(order.getQuantity(), order.getPrice());
             holdingRepository.save(holding);
             order.updateStatus("COMPLETED");
@@ -320,12 +335,12 @@ public class OrderService {
 
             Holding holding = holdingRepository.findByAccountIdAndStockId(account.getId(), order.getStock().getId())
                     .orElseThrow(() -> new IllegalStateException("보유 주식 데이터가 없습니다."));
-            
+
             holding.deductQuantity(order.getQuantity());
             holdingRepository.save(holding);
             order.updateStatus("COMPLETED");
         }
-        
+
         orderRepository.save(order);
 
         // 알림 발송
@@ -360,6 +375,16 @@ public class OrderService {
                 .collect(Collectors.toList());
     }
 
+    @Transactional(readOnly = true)
+    public List<StockResponseDto> getHeldStocksByAccountId(Long accountId) {
+        List<String> symbols = holdingRepository.findByAccountId(accountId).stream()
+                .filter(holding -> holding.getQuantity() > 0)
+                .map(holding -> holding.getStock().getStockCode())
+                .collect(Collectors.toList());
+
+        return stockService.getStockDetails(symbols);
+    }
+
     @Transactional
     public void cancelOrder(Long orderId, Long accountId) {
         Order order = orderRepository.findById(orderId)
@@ -385,12 +410,12 @@ public class OrderService {
         }
 
         order.cancel();
-        
+
         if ("BUY".equals(order.getOrderSide())) {
             BigDecimal refundAmount = order.getPrice().multiply(BigDecimal.valueOf(order.getQuantity()));
             order.getAccount().addBalance(refundAmount);
         }
-        
+
         orderRepository.save(order);
     }
 
