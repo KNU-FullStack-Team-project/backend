@@ -13,10 +13,13 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 import org.team12.teamproject.dto.ChangeNicknameRequestDto;
 import org.team12.teamproject.dto.ChangePasswordRequestDto;
+import org.team12.teamproject.dto.GoogleLoginRequestDto;
+import org.team12.teamproject.dto.GoogleSignupRequestDto;
 import org.team12.teamproject.dto.LoginRequestDto;
 import org.team12.teamproject.dto.LoginResponseDto;
 import org.team12.teamproject.dto.ResetPasswordRequestDto;
 import org.team12.teamproject.dto.SignupRequestDto;
+import org.team12.teamproject.dto.SocialLoginResultDto;
 import org.team12.teamproject.dto.UserProfileResponseDto;
 import org.team12.teamproject.dto.WithdrawUserRequestDto;
 import org.team12.teamproject.exception.LoginFailedException;
@@ -53,11 +56,32 @@ public class UserController {
                     null,
                     null,
                     null,
+                    null,
                     e.getMessage(),
                     null,
                     null,
-                    e.isCaptchaRequired());
+                    e.isCaptchaRequired(),
+                    false);
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(response);
+        }
+    }
+
+    @PostMapping("/social/google")
+    public ResponseEntity<?> googleLogin(@RequestBody GoogleLoginRequestDto dto) {
+        try {
+            return ResponseEntity.ok(userService.loginWithGoogle(dto));
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/social/google/signup")
+    public ResponseEntity<?> googleSignup(@RequestBody GoogleSignupRequestDto dto) {
+        try {
+            LoginResponseDto response = userService.signupWithGoogle(dto);
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
         }
     }
 

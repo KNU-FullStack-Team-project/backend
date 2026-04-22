@@ -9,10 +9,13 @@ import org.springframework.web.multipart.MultipartFile;
 import org.team12.teamproject.dto.AdminUpdateUserRequestDto;
 import org.team12.teamproject.dto.ChangeNicknameRequestDto;
 import org.team12.teamproject.dto.ChangePasswordRequestDto;
+import org.team12.teamproject.dto.GoogleLoginRequestDto;
+import org.team12.teamproject.dto.GoogleSignupRequestDto;
 import org.team12.teamproject.dto.LoginRequestDto;
 import org.team12.teamproject.dto.LoginResponseDto;
 import org.team12.teamproject.dto.ResetPasswordRequestDto;
 import org.team12.teamproject.dto.SignupRequestDto;
+import org.team12.teamproject.dto.SocialLoginResultDto;
 import org.team12.teamproject.dto.UserProfileResponseDto;
 import org.team12.teamproject.dto.WithdrawUserRequestDto;
 import org.team12.teamproject.entity.Account;
@@ -21,10 +24,12 @@ import org.team12.teamproject.exception.LoginFailedException;
 import org.team12.teamproject.repository.AccountRepository;
 import org.team12.teamproject.repository.UserRepository;
 import org.team12.teamproject.security.JwtUtil;
+import com.google.api.client.googleapis.auth.oauth2.GoogleIdToken;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.io.InputStream;
 import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -33,12 +38,14 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.net.URL;
 
 @Service
 @RequiredArgsConstructor
 public class UserService {
 
     private static final int CAPTCHA_THRESHOLD = 5;
+    private static final String SOCIAL_GOOGLE_PASSWORD_MARKER = "{social}google";
 
     private final UserRepository userRepository;
     private final AccountRepository accountRepository;
@@ -48,6 +55,7 @@ public class UserService {
     private final JwtUtil jwtUtil;
     private final RecaptchaService recaptchaService;
     private final UserActivityAuditLogger userActivityAuditLogger;
+    private final GoogleTokenVerifierService googleTokenVerifierService;
 
     private final Map<String, Integer> loginFailureCounts = new ConcurrentHashMap<>();
 
@@ -77,7 +85,7 @@ public class UserService {
             existingUser.setPasswordHash(passwordEncoder.encode(dto.getPassword()));
             existingUser.setNickname(dto.getNickname());
             existingUser.setRole("USER");
-            existingUser.setStatus("ACTIVE");
+            existingUser.setStatus("REJOINED");
             existingUser.setMarketingConsent(dto.getMarketingConsent() != null && dto.getMarketingConsent());
             existingUser.setEmailVerified(true);
             existingUser.setWithdrawnAt(null);
@@ -90,7 +98,7 @@ public class UserService {
             createDefaultAccount(existingUser);
             emailService.clearVerification(dto.getEmail());
 
-            return "회원가입 완료";
+            return "재가입 완료";
         }
 
         if (userRepository.countByNickname(dto.getNickname()) > 0) {
@@ -168,7 +176,7 @@ public class UserService {
             throw new LoginFailedException("정지된 계정입니다.", isCaptchaRequired(normalizedEmail));
         }
 
-        if (!"ACTIVE".equalsIgnoreCase(user.getStatus())) {
+        if (!isLoginAllowedStatus(user.getStatus())) {
             throw new LoginFailedException("비활성화된 계정입니다.", isCaptchaRequired(normalizedEmail));
         }
 
@@ -195,12 +203,129 @@ public class UserService {
                 user.getId(),
                 user.getEmail(),
                 user.getNickname(),
+                normalizeProfileImageUrl(user.getProfileImageUrl()),
                 user.getRole(),
                 "로그인 성공",
                 token,
                 accountId,
+                false,
+                isSocialPasswordMarker(user.getPasswordHash())
+        );
+    }
+
+    @Transactional
+    public SocialLoginResultDto loginWithGoogle(GoogleLoginRequestDto dto) {
+        GoogleIdToken.Payload payload = googleTokenVerifierService.verify(dto.getCredential());
+
+        String email = payload.getEmail();
+        if (email == null || email.isBlank()) {
+            throw new RuntimeException("Google account email is missing.");
+        }
+
+        User user = userRepository.findByEmail(email).orElse(null);
+
+        if (user == null) {
+            String name = payload.get("name") instanceof String ? (String) payload.get("name") : null;
+            return new SocialLoginResultDto(
+                    true,
+                    null,
+                    email,
+                    generateAvailableNickname(name, email),
+                    extractGooglePicture(payload),
+                    false
+            );
+        }
+
+        if ("QUIT".equalsIgnoreCase(user.getStatus())) {
+            return new SocialLoginResultDto(
+                    true,
+                    null,
+                    email,
+                    "",
+                    extractGooglePicture(payload),
+                    true
+            );
+        }
+
+        if ("SUSPENDED".equalsIgnoreCase(user.getStatus())) {
+            throw new RuntimeException("정지된 계정은 로그인할 수 없습니다.");
+        }
+
+        if (!isLoginAllowedStatus(user.getStatus())) {
+            throw new RuntimeException("비활성화된 계정입니다.");
+        }
+
+        clearLoginFailures(normalizeEmail(email));
+        user.setLastLoginAt(LocalDateTime.now());
+        user.setUpdatedAt(LocalDateTime.now());
+
+        String pictureUrl = extractGooglePicture(payload);
+        if (pictureUrl != null && !pictureUrl.isBlank()) {
+            saveSocialProfileImage(user, pictureUrl);
+        }
+
+        userRepository.save(user);
+
+        return new SocialLoginResultDto(
+                false,
+                buildLoginResponse(user, "간편로그인 성공"),
+                null,
+                null,
+                null,
                 false
         );
+    }
+
+    @Transactional
+    public LoginResponseDto signupWithGoogle(GoogleSignupRequestDto dto) {
+        GoogleIdToken.Payload payload = googleTokenVerifierService.verify(dto.getCredential());
+
+        String email = payload.getEmail();
+        if (email == null || email.isBlank()) {
+            throw new RuntimeException("Google account email is missing.");
+        }
+
+        String nickname = dto.getNickname() != null ? dto.getNickname().trim() : "";
+        if (nickname.isEmpty()) {
+            throw new RuntimeException("닉네임을 입력해 주세요.");
+        }
+
+        User existingUser = userRepository.findByEmail(email).orElse(null);
+        if (existingUser != null && !"QUIT".equalsIgnoreCase(existingUser.getStatus())) {
+            throw new RuntimeException("이미 가입된 계정입니다. 간편로그인을 다시 시도해 주세요.");
+        }
+
+        if (userRepository.countByNickname(nickname) > 0) {
+            throw new RuntimeException("이미 사용 중인 닉네임입니다.");
+        }
+
+        if (existingUser != null) {
+            resetUserAssets(existingUser.getId());
+
+            existingUser.setPasswordHash(SOCIAL_GOOGLE_PASSWORD_MARKER);
+            existingUser.setNickname(nickname);
+            existingUser.setRole("USER");
+            existingUser.setStatus("REJOINED");
+            existingUser.setMarketingConsent(dto.getMarketingConsent() != null && dto.getMarketingConsent());
+            existingUser.setEmailVerified(true);
+            existingUser.setWithdrawnAt(null);
+            existingUser.setSuspendedAt(null);
+            existingUser.setDeletedAt(null);
+            existingUser.setCreatedAt(LocalDateTime.now());
+            existingUser.setUpdatedAt(LocalDateTime.now());
+            saveSocialProfileImage(existingUser, extractGooglePicture(payload));
+            userRepository.save(existingUser);
+            createDefaultAccount(existingUser);
+
+            return buildLoginResponse(existingUser, "다시 돌아오신 것을 환영합니다.");
+        }
+
+        User user = createGoogleUser(
+                payload,
+                nickname,
+                dto.getMarketingConsent() != null && dto.getMarketingConsent()
+        );
+        return buildLoginResponse(user, "간편회원가입 및 로그인 성공");
     }
 
     public String checkEmail(String email) {
@@ -400,7 +525,9 @@ public class UserService {
             throw new RuntimeException("권한 값이 올바르지 않습니다.");
         }
 
-        if (!"ACTIVE".equals(dto.getStatus()) && !"SUSPENDED".equals(dto.getStatus())) {
+        if (!"ACTIVE".equals(dto.getStatus())
+                && !"SUSPENDED".equals(dto.getStatus())
+                && !"REJOINED".equals(dto.getStatus())) {
             throw new RuntimeException("상태 값이 올바르지 않습니다.");
         }
 
@@ -420,6 +547,7 @@ public class UserService {
         deleteProfileImage(user.getId());
 
         user.setProfileImageUrl(null);
+        user.setNickname(generateWithdrawnNickname(user));
         user.setStatus("QUIT");
         user.setWithdrawnAt(LocalDateTime.now());
         user.setUpdatedAt(LocalDateTime.now());
@@ -436,6 +564,10 @@ public class UserService {
 
     private boolean matchesPassword(String rawPassword, String storedPassword) {
         if (rawPassword == null || storedPassword == null) {
+            return false;
+        }
+
+        if (isSocialPasswordMarker(storedPassword)) {
             return false;
         }
 
@@ -503,6 +635,60 @@ public class UserService {
         return email == null ? "" : email.trim().toLowerCase();
     }
 
+    private boolean isLoginAllowedStatus(String status) {
+        return "ACTIVE".equalsIgnoreCase(status) || "REJOINED".equalsIgnoreCase(status);
+    }
+
+    private String normalizeProfileImageUrl(String profileImageUrl) {
+        if (profileImageUrl != null && profileImageUrl.startsWith("/profile")) {
+            return "/api" + profileImageUrl;
+        }
+
+        return profileImageUrl;
+    }
+
+    private boolean isSocialPasswordMarker(String storedPassword) {
+        return SOCIAL_GOOGLE_PASSWORD_MARKER.equals(storedPassword);
+    }
+
+    private String generateWithdrawnNickname(User user) {
+        String base = "withdrawn_" + (user.getId() != null ? user.getId() : "user");
+        String candidate = base;
+        int suffix = 1;
+
+        while (userRepository.countByNickname(candidate) > 0) {
+            candidate = base + "_" + suffix;
+            suffix++;
+        }
+
+        return candidate;
+    }
+
+    private void saveSocialProfileImage(User user, String imageUrl) {
+        if (user == null || user.getId() == null || imageUrl == null || imageUrl.isBlank()) {
+            return;
+        }
+
+        try {
+            Path profileDirectory = getProfileDirectory();
+            Files.createDirectories(profileDirectory);
+
+            try (InputStream inputStream = new URL(imageUrl).openStream()) {
+                BufferedImage profileImage = ImageIO.read(inputStream);
+                if (profileImage == null) {
+                    return;
+                }
+
+                Path profileImagePath = profileDirectory.resolve(user.getId() + ".png");
+                ImageIO.write(profileImage, "png", profileImagePath.toFile());
+                user.setProfileImageUrl("/profile/" + user.getId() + ".png");
+                user.setUpdatedAt(LocalDateTime.now());
+            }
+        } catch (IOException e) {
+            // Keep social login working even if the remote profile image cannot be downloaded.
+        }
+    }
+
     private UserProfileResponseDto toUserProfile(User user) {
         List<Account> accounts = accountRepository.findByUserId(user.getId());
 
@@ -523,6 +709,7 @@ public class UserService {
                 .email(user.getEmail())
                 .nickname(user.getNickname())
                 .profileImageUrl(finalProfileImageUrl)
+                .socialLogin(isSocialPasswordMarker(user.getPasswordHash()))
                 .role(user.getRole())
                 .status(user.getStatus())
                 .createdAt(user.getCreatedAt() != null ? user.getCreatedAt().toString() : null)
@@ -568,6 +755,79 @@ public class UserService {
                 "USER",
                 String.valueOf(user.getId()),
                 "client_logout"
+        );
+    }
+
+    private User createGoogleUser(GoogleIdToken.Payload payload, String nickname, boolean marketingConsent) {
+        String email = payload.getEmail().trim();
+        String pictureUrl = extractGooglePicture(payload);
+
+        User user = User.builder()
+                .email(email)
+                .passwordHash(SOCIAL_GOOGLE_PASSWORD_MARKER)
+                .nickname(nickname)
+                .profileImageUrl(null)
+                .role("USER")
+                .status("ACTIVE")
+                .marketingConsent(marketingConsent)
+                .emailVerified(true)
+                .createdAt(LocalDateTime.now())
+                .updatedAt(LocalDateTime.now())
+                .build();
+
+        userRepository.save(user);
+        saveSocialProfileImage(user, pictureUrl);
+        createDefaultAccount(user);
+        return user;
+    }
+
+    private String extractGooglePicture(GoogleIdToken.Payload payload) {
+        return payload.get("picture") instanceof String ? (String) payload.get("picture") : null;
+    }
+
+    private String generateAvailableNickname(String name, String email) {
+        String seed = name != null && !name.isBlank() ? name : email.substring(0, email.indexOf('@'));
+        String base = seed.replaceAll("[^\\p{L}\\p{N}_]", "").trim();
+
+        if (base.isBlank()) {
+            base = "user";
+        }
+
+        String candidate = base;
+        int suffix = 1;
+        while (userRepository.countByNickname(candidate) > 0) {
+            candidate = base + suffix;
+            suffix++;
+        }
+
+        return candidate;
+    }
+
+    private LoginResponseDto buildLoginResponse(User user, String message) {
+        List<Account> accounts = accountRepository.findByUserId(user.getId());
+        Long accountId = accounts.isEmpty() ? null : accounts.get(0).getId();
+        String token = jwtUtil.generateToken(user.getEmail(), user.getRole());
+
+        userActivityAuditLogger.log(
+                user.getId(),
+                user.getEmail(),
+                "LOGIN",
+                "USER",
+                String.valueOf(user.getId()),
+                "role=" + user.getRole()
+        );
+
+        return new LoginResponseDto(
+                user.getId(),
+                user.getEmail(),
+                user.getNickname(),
+                normalizeProfileImageUrl(user.getProfileImageUrl()),
+                user.getRole(),
+                message,
+                token,
+                accountId,
+                false,
+                isSocialPasswordMarker(user.getPasswordHash())
         );
     }
 }

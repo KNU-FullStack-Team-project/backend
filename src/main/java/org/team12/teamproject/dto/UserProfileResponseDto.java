@@ -10,6 +10,7 @@ public class UserProfileResponseDto {
     private String email;
     private String nickname;
     private String profileImageUrl;
+    private Boolean socialLogin;
     private String role;
     private String status;
     private String createdAt;

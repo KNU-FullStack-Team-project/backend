@@ -13,9 +13,11 @@ public class LoginResponseDto {
     private Long userId;
     private String email;
     private String nickname;
+    private String profileImageUrl;
     private String role;
     private String message;
     private String token;
     private Long accountId;
     private Boolean captchaRequired;
+    private Boolean socialLogin;
 }
