@@ -65,6 +65,8 @@ public class CommunityService {
     private final UserActivityAuditLogger userActivityAuditLogger;
 
     private static final String STOCK_DISCUSSION_BOARD_CODE = "STOCK_DISCUSSION";
+    private static final String FREE_BOARD_CODE = "FREE";
+    private static final String NOTICE_BOARD_CODE = "NOTICE";
 
     private static final Set<String> ALLOWED_REPORT_REASONS = Set.of(
             "ABUSE",
@@ -83,12 +85,14 @@ public class CommunityService {
         Stock stock = stockRepository.findByStockCode(symbol)
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 종목입니다."));
 
-        List<Post> notices =
-                postRepository.findByIsNoticeTrueAndStatusOrderByCreatedAtDesc("NORMAL");
+        Board stockBoard = boardRepository.findByBoardCode(STOCK_DISCUSSION_BOARD_CODE)
+                .orElseThrow(() -> new IllegalArgumentException("종목 토론 게시판이 존재하지 않습니다."));
 
-        if (notices.size() > 3) {
-            notices = notices.subList(0, 3);
-        }
+        List<Post> notices = postRepository.findByBoardIdAndStatusOrderByCreatedAtDesc(stockBoard.getId(), "NORMAL")
+                .stream()
+                .filter(Post::getIsNotice)
+                .limit(3)
+                .toList();
 
         List<Post> stockPosts = postRepository
                 .findByStockIdAndStatusAndIsNoticeFalseOrderByCreatedAtDesc(stock.getId(), "NORMAL");
@@ -107,7 +111,7 @@ public class CommunityService {
                         .nickname(post.getUser().getNickname())
                         .hasBoughtStock(
                                 post.getStock() != null &&
-                                hasBoughtStock(post.getUser().getId(), post.getStock().getId())
+                                        hasBoughtStock(post.getUser().getId(), post.getStock().getId())
                         )
                         .title(post.getTitle())
                         .commentCount(post.getCommentCount())
@@ -121,7 +125,10 @@ public class CommunityService {
 
     @Transactional(readOnly = true)
     public List<CommunityPostResponseDto> getNoticePosts() {
-        return postRepository.findByIsNoticeTrueAndStatusOrderByCreatedAtDesc("NORMAL")
+        Board noticeBoard = boardRepository.findByBoardCode(NOTICE_BOARD_CODE)
+                .orElseThrow(() -> new IllegalArgumentException("공지사항 게시판이 존재하지 않습니다."));
+
+        return postRepository.findByBoardIdAndStatusOrderByCreatedAtDesc(noticeBoard.getId(), "NORMAL")
                 .stream()
                 .map(post -> CommunityPostResponseDto.builder()
                         .postId(post.getId())
@@ -139,6 +146,53 @@ public class CommunityService {
                         .createdAt(post.getCreatedAt())
                         .build())
                 .toList();
+    }
+
+    @Transactional
+    public Long createNoticePost(CommunityPostCreateRequestDto request, String email, boolean isAdmin) {
+        if (!isAdmin) {
+            throw new IllegalArgumentException("관리자만 전역 공지를 작성할 수 있습니다.");
+        }
+
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 사용자입니다."));
+
+        Board board = boardRepository.findByBoardCode(NOTICE_BOARD_CODE)
+                .orElseThrow(() -> new IllegalArgumentException("공지사항 게시판이 존재하지 않습니다."));
+
+        validatePostRequest(request.getTitle(), request.getContent());
+
+        Post post = Post.builder()
+                .board(board)
+                .user(user)
+                .stock(null)
+                .title(request.getTitle().trim())
+                .content(request.getContent().trim())
+                .viewCount(0)
+                .likeCount(0)
+                .commentCount(0)
+                .reportCount(0)
+                .status("NORMAL")
+                .isNotice(true)
+                .createdAt(LocalDateTime.now())
+                .updatedAt(LocalDateTime.now())
+                .build();
+
+        Post savedPost = postRepository.save(post);
+
+        finalizeTempAttachments(savedPost, user);
+        syncAttachments(savedPost, user, request.getAttachmentIds(), false);
+
+        userActivityAuditLogger.log(
+                user.getId(),
+                user.getEmail(),
+                "POST_CREATE",
+                "POST",
+                String.valueOf(savedPost.getId()),
+                "[GLOBAL_NOTICE] " + abbreviateForLog(savedPost.getTitle()) + " | " + abbreviateForLog(savedPost.getContent())
+        );
+
+        return savedPost.getId();
     }
 
     @Transactional
@@ -284,6 +338,7 @@ public class CommunityService {
 
         postLikeRepository.save(postLike);
         post.increaseLikeCount();
+
         userActivityAuditLogger.log(
                 user.getId(),
                 user.getEmail(),
@@ -318,6 +373,7 @@ public class CommunityService {
 
         post.increaseCommentCount();
         Long commentId = commentRepository.save(comment).getId();
+
         userActivityAuditLogger.log(
                 user.getId(),
                 user.getEmail(),
@@ -326,6 +382,7 @@ public class CommunityService {
                 String.valueOf(commentId),
                 abbreviateForLog(comment.getContent())
         );
+
         return commentId;
     }
 
@@ -368,6 +425,7 @@ public class CommunityService {
 
         finalizeTempAttachments(post, loginUser);
         syncAttachments(post, loginUser, request.getAttachmentIds(), true);
+
         userActivityAuditLogger.log(
                 loginUser.getId(),
                 loginUser.getEmail(),
@@ -400,6 +458,7 @@ public class CommunityService {
                 String.valueOf(post.getId()),
                 abbreviateForLog(post.getTitle()) + " | " + abbreviateForLog(post.getContent())
         );
+
         post.softDelete();
     }
 
@@ -418,6 +477,7 @@ public class CommunityService {
         }
 
         Post post = comment.getPost();
+
         userActivityAuditLogger.log(
                 loginUser.getId(),
                 loginUser.getEmail(),
@@ -426,6 +486,7 @@ public class CommunityService {
                 String.valueOf(comment.getId()),
                 abbreviateForLog(comment.getContent())
         );
+
         comment.softDelete();
         post.decreaseCommentCount();
     }
@@ -509,6 +570,77 @@ public class CommunityService {
                 String.valueOf(commentId),
                 "reason=" + request.getReason().trim()
         );
+    }
+
+    @Transactional(readOnly = true)
+    public List<CommunityPostResponseDto> getFreeCommentedPosts(String email) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 사용자입니다."));
+
+        Board board = boardRepository.findByBoardCode(FREE_BOARD_CODE)
+                .orElseThrow(() -> new IllegalArgumentException("자유게시판이 존재하지 않습니다."));
+
+        List<Comment> comments = commentRepository.findByUser_IdOrderByCreatedAtDesc(user.getId());
+
+        return comments.stream()
+                .map(Comment::getPost)
+                .filter(post -> post != null)
+                .filter(post -> "NORMAL".equals(post.getStatus()))
+                .filter(post -> post.getBoard() != null && board.getId().equals(post.getBoard().getId()))
+                .distinct()
+                .map(post -> CommunityPostResponseDto.builder()
+                        .postId(post.getId())
+                        .userId(post.getUser().getId())
+                        .nickname(post.getUser().getNickname())
+                        .title(post.getTitle())
+                        .commentCount(post.getCommentCount())
+                        .viewCount(post.getViewCount())
+                        .likeCount(post.getLikeCount())
+                        .isNotice(post.getIsNotice())
+                        .createdAt(post.getCreatedAt())
+                        .build())
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<CommunityPostResponseDto> getStockCommentedPosts(String symbol, String email) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 사용자입니다."));
+
+        Stock stock = stockRepository.findByStockCode(symbol)
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 종목입니다."));
+
+        Board board = boardRepository.findByBoardCode(STOCK_DISCUSSION_BOARD_CODE)
+                .orElseThrow(() -> new IllegalArgumentException("종목 토론 게시판이 존재하지 않습니다."));
+
+        List<Comment> comments = commentRepository.findByUser_IdOrderByCreatedAtDesc(user.getId());
+
+        return comments.stream()
+                .map(Comment::getPost)
+                .filter(post -> post != null)
+                .filter(post -> "NORMAL".equals(post.getStatus()))
+                .filter(post -> post.getBoard() != null && board.getId().equals(post.getBoard().getId()))
+                .filter(post -> post.getStock() != null && stock.getId().equals(post.getStock().getId()))
+                .distinct()
+                .map(post -> CommunityPostResponseDto.builder()
+                        .postId(post.getId())
+                        .stockId(post.getStock() != null ? post.getStock().getId() : null)
+                        .stockCode(post.getStock() != null ? post.getStock().getStockCode() : null)
+                        .stockName(post.getStock() != null ? post.getStock().getStockName() : null)
+                        .userId(post.getUser().getId())
+                        .nickname(post.getUser().getNickname())
+                        .hasBoughtStock(
+                                post.getStock() != null &&
+                                        hasBoughtStock(post.getUser().getId(), post.getStock().getId())
+                        )
+                        .title(post.getTitle())
+                        .commentCount(post.getCommentCount())
+                        .viewCount(post.getViewCount())
+                        .likeCount(post.getLikeCount())
+                        .isNotice(post.getIsNotice())
+                        .createdAt(post.getCreatedAt())
+                        .build())
+                .toList();
     }
 
     private void validateReportReason(CommunityReportRequestDto request) {
@@ -698,70 +830,92 @@ public class CommunityService {
 
         return normalized.substring(0, 60) + "...";
     }
+
     @Transactional(readOnly = true)
-public List<CommunityPostResponseDto> getFreePosts() {
+    public List<CommunityPostResponseDto> getFreePosts() {
+        Board board = boardRepository.findByBoardCode(FREE_BOARD_CODE)
+                .orElseThrow(() -> new IllegalArgumentException("자유게시판이 존재하지 않습니다."));
 
-    Board board = boardRepository.findByBoardCode("FREE")
-            .orElseThrow(() -> new IllegalArgumentException("자유게시판이 존재하지 않습니다."));
+        return postRepository.findByBoardIdAndStatusOrderByCreatedAtDesc(board.getId(), "NORMAL")
+                .stream()
+                .map(post -> CommunityPostResponseDto.builder()
+                        .postId(post.getId())
+                        .userId(post.getUser().getId())
+                        .nickname(post.getUser().getNickname())
+                        .title(post.getTitle())
+                        .commentCount(post.getCommentCount())
+                        .viewCount(post.getViewCount())
+                        .likeCount(post.getLikeCount())
+                        .isNotice(post.getIsNotice())
+                        .createdAt(post.getCreatedAt())
+                        .build())
+                .toList();
+    }
 
-    return postRepository.findByBoardIdAndStatusOrderByCreatedAtDesc(board.getId(), "NORMAL")
-            .stream()
-            .map(post -> CommunityPostResponseDto.builder()
-                    .postId(post.getId())
-                    .userId(post.getUser().getId())
-                    .nickname(post.getUser().getNickname())
-                    .title(post.getTitle())
-                    .commentCount(post.getCommentCount())
-                    .viewCount(post.getViewCount())
-                    .likeCount(post.getLikeCount())
-                    .isNotice(post.getIsNotice())
-                    .createdAt(post.getCreatedAt())
-                    .build())
-            .toList();
-}
+    @Transactional(readOnly = true)
+    public List<CommunityPostResponseDto> getFreeNoticePosts() {
+        Board board = boardRepository.findByBoardCode(FREE_BOARD_CODE)
+                .orElseThrow(() -> new IllegalArgumentException("자유게시판이 존재하지 않습니다."));
 
-@Transactional
-public Long createFreePost(CommunityPostCreateRequestDto request, String email) {
+        return postRepository.findByBoardIdAndStatusOrderByCreatedAtDesc(board.getId(), "NORMAL")
+                .stream()
+                .filter(Post::getIsNotice)
+                .map(post -> CommunityPostResponseDto.builder()
+                        .postId(post.getId())
+                        .userId(post.getUser().getId())
+                        .nickname(post.getUser().getNickname())
+                        .title(post.getTitle())
+                        .commentCount(post.getCommentCount())
+                        .viewCount(post.getViewCount())
+                        .likeCount(post.getLikeCount())
+                        .isNotice(post.getIsNotice())
+                        .createdAt(post.getCreatedAt())
+                        .build())
+                .toList();
+    }
 
-    User user = userRepository.findByEmail(email)
-            .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 사용자입니다."));
+    @Transactional
+    public Long createFreePost(CommunityPostCreateRequestDto request, String email, boolean isAdmin) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 사용자입니다."));
 
-    Board board = boardRepository.findByBoardCode("FREE")
-            .orElseThrow(() -> new IllegalArgumentException("자유게시판이 존재하지 않습니다."));
+        Board board = boardRepository.findByBoardCode(FREE_BOARD_CODE)
+                .orElseThrow(() -> new IllegalArgumentException("자유게시판이 존재하지 않습니다."));
 
-    validatePostRequest(request.getTitle(), request.getContent());
+        validatePostRequest(request.getTitle(), request.getContent());
 
-    Post post = Post.builder()
-            .board(board)
-            .user(user)
-            .stock(null) // 🔥 중요
-            .title(request.getTitle())
-            .content(request.getContent())
-            .viewCount(0)
-            .likeCount(0)
-            .commentCount(0)
-            .reportCount(0)
-            .status("NORMAL")
-            .isNotice(false)
-            .createdAt(LocalDateTime.now())
-            .updatedAt(LocalDateTime.now())
-            .build();
+        boolean isNotice = isAdmin && Boolean.TRUE.equals(request.getIsNotice());
 
-    Post savedPost = postRepository.save(post);
+        Post post = Post.builder()
+                .board(board)
+                .user(user)
+                .stock(null)
+                .title(request.getTitle().trim())
+                .content(request.getContent().trim())
+                .viewCount(0)
+                .likeCount(0)
+                .commentCount(0)
+                .reportCount(0)
+                .status("NORMAL")
+                .isNotice(isNotice)
+                .createdAt(LocalDateTime.now())
+                .updatedAt(LocalDateTime.now())
+                .build();
 
-    finalizeTempAttachments(savedPost, user);
-    syncAttachments(savedPost, user, request.getAttachmentIds(), false);
+        Post savedPost = postRepository.save(post);
 
-    userActivityAuditLogger.log(
-            user.getId(),
-            user.getEmail(),
-            "POST_CREATE",
-            "POST",
-            String.valueOf(savedPost.getId()),
-            abbreviateForLog(savedPost.getTitle()) + " | " + abbreviateForLog(savedPost.getContent())
-    );
+        finalizeTempAttachments(savedPost, user);
+        syncAttachments(savedPost, user, request.getAttachmentIds(), false);
 
-    return savedPost.getId();
-}
+        userActivityAuditLogger.log(
+                user.getId(),
+                user.getEmail(),
+                "POST_CREATE",
+                "POST",
+                String.valueOf(savedPost.getId()),
+                abbreviateForLog(savedPost.getTitle()) + " | " + abbreviateForLog(savedPost.getContent())
+        );
 
+        return savedPost.getId();
+    }
 }

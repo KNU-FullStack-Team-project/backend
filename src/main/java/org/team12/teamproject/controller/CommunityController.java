@@ -30,6 +30,24 @@ public class CommunityController {
         return ResponseEntity.ok(communityService.getStockPosts(symbol));
     }
 
+    @GetMapping("/stocks/{symbol}/posts/commented-by-me")
+    public ResponseEntity<?> getStockCommentedPosts(
+            @PathVariable String symbol,
+            Authentication authentication
+    ) {
+        try {
+            if (authentication == null || authentication.getName() == null) {
+                return ResponseEntity.status(401).body("로그인이 필요합니다.");
+            }
+
+            return ResponseEntity.ok(
+                    communityService.getStockCommentedPosts(symbol, authentication.getName())
+            );
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
     @PostMapping("/stocks/{symbol}/posts")
     public ResponseEntity<?> createStockPost(
             @PathVariable String symbol,
@@ -47,6 +65,36 @@ public class CommunityController {
 
             Long postId = communityService.createStockPost(symbol, request, email, isAdmin);
             return ResponseEntity.ok(postId);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    @GetMapping("/notices")
+    public ResponseEntity<List<CommunityPostResponseDto>> getNoticePosts() {
+        return ResponseEntity.ok(communityService.getNoticePosts());
+    }
+
+    @PostMapping("/notices")
+    public ResponseEntity<?> createNoticePost(
+            @RequestBody CommunityPostCreateRequestDto request,
+            Authentication authentication
+    ) {
+        try {
+            if (authentication == null || authentication.getName() == null) {
+                return ResponseEntity.status(401).body("로그인이 필요합니다.");
+            }
+
+            boolean isAdmin = authentication.getAuthorities().stream()
+                    .anyMatch(auth -> "ROLE_ADMIN".equals(auth.getAuthority()));
+
+            Long postId = communityService.createNoticePost(
+                    request,
+                    authentication.getName(),
+                    isAdmin
+            );
+            return ResponseEntity.ok(postId);
+
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(e.getMessage());
         }
@@ -216,30 +264,53 @@ public class CommunityController {
         }
     }
 
-    @GetMapping("/notices")
-    public ResponseEntity<List<CommunityPostResponseDto>> getNoticePosts() {
-        return ResponseEntity.ok(communityService.getNoticePosts());
-    }
     @GetMapping("/boards/free/posts")
-public ResponseEntity<List<CommunityPostResponseDto>> getFreePosts() {
-    return ResponseEntity.ok(communityService.getFreePosts());
-}
-
-@PostMapping("/boards/free/posts")
-public ResponseEntity<?> createFreePost(
-        @RequestBody CommunityPostCreateRequestDto request,
-        Authentication authentication
-) {
-    try {
-        if (authentication == null) {
-            return ResponseEntity.status(401).body("로그인이 필요합니다.");
-        }
-
-        Long postId = communityService.createFreePost(request, authentication.getName());
-        return ResponseEntity.ok(postId);
-
-    } catch (Exception e) {
-        return ResponseEntity.badRequest().body(e.getMessage());
+    public ResponseEntity<List<CommunityPostResponseDto>> getFreePosts() {
+        return ResponseEntity.ok(communityService.getFreePosts());
     }
-}
+
+    @GetMapping("/boards/free/notices")
+    public ResponseEntity<List<CommunityPostResponseDto>> getFreeNoticePosts() {
+        return ResponseEntity.ok(communityService.getFreeNoticePosts());
+    }
+
+    @GetMapping("/boards/free/posts/commented-by-me")
+    public ResponseEntity<?> getFreeCommentedPosts(Authentication authentication) {
+        try {
+            if (authentication == null || authentication.getName() == null) {
+                return ResponseEntity.status(401).body("로그인이 필요합니다.");
+            }
+
+            return ResponseEntity.ok(
+                    communityService.getFreeCommentedPosts(authentication.getName())
+            );
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    @PostMapping("/boards/free/posts")
+    public ResponseEntity<?> createFreePost(
+            @RequestBody CommunityPostCreateRequestDto request,
+            Authentication authentication
+    ) {
+        try {
+            if (authentication == null || authentication.getName() == null) {
+                return ResponseEntity.status(401).body("로그인이 필요합니다.");
+            }
+
+            boolean isAdmin = authentication.getAuthorities().stream()
+                    .anyMatch(auth -> "ROLE_ADMIN".equals(auth.getAuthority()));
+
+            Long postId = communityService.createFreePost(
+                    request,
+                    authentication.getName(),
+                    isAdmin
+            );
+            return ResponseEntity.ok(postId);
+
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
 }
