@@ -22,12 +22,13 @@ public class CompetitionService {
 
     private final JdbcTemplate jdbcTemplate;
 
-    public List<CompetitionListResponseDto> getCompetitionList() {
+    public List<CompetitionListResponseDto> getCompetitionList(boolean isAdmin) {
         String sql = """
                 SELECT c.competition_id,
                        c.title,
                        c.description,
                        CASE
+                           WHEN c.status = 'CANCELED' THEN 'CANCELED'
                            WHEN SYSTIMESTAMP < c.start_at THEN 'SCHEDULED'
                            WHEN SYSTIMESTAMP > c.end_at THEN 'ENDED'
                            ELSE 'ONGOING'
@@ -36,21 +37,27 @@ public class CompetitionService {
                        c.end_at,
                        c.initial_seed_money,
                        c.max_participants,
-                       COUNT(cp.competition_id) AS participant_count
+                       c.is_public,
+                       COUNT(CASE WHEN cp.participation_status = 'JOINED' THEN 1 END) AS participant_count
                 FROM competitions c
                 LEFT JOIN competition_participants cp
                   ON c.competition_id = cp.competition_id
+                WHERE (? = 1 OR c.is_public = 1)
                 GROUP BY c.competition_id,
                          c.title,
                          c.description,
+                         c.status,
                          c.start_at,
                          c.end_at,
                          c.initial_seed_money,
-                         c.max_participants
-                ORDER BY c.competition_id
+                         c.max_participants,
+                         c.is_public
+                ORDER BY c.competition_id DESC
                 """;
 
-        return jdbcTemplate.query(sql, (rs, rowNum) -> new CompetitionListResponseDto(
+        return jdbcTemplate.query(sql, ps -> {
+            ps.setInt(1, isAdmin ? 1 : 0);
+        }, (rs, rowNum) -> new CompetitionListResponseDto(
                 rs.getLong("competition_id"),
                 rs.getString("title"),
                 rs.getString("description"),
@@ -59,16 +66,18 @@ public class CompetitionService {
                 toLocalDateTime(rs.getTimestamp("end_at")),
                 rs.getBigDecimal("initial_seed_money"),
                 rs.getObject("max_participants") != null ? rs.getInt("max_participants") : null,
-                rs.getInt("participant_count")
+                rs.getInt("participant_count"),
+                rs.getInt("is_public") == 1
         ));
     }
 
-    public CompetitionDetailResponseDto getCompetitionDetail(Long competitionId) {
+    public CompetitionDetailResponseDto getCompetitionDetail(Long competitionId, boolean isAdmin) {
         String sql = """
                 SELECT c.competition_id,
                        c.title,
                        c.description,
                        CASE
+                           WHEN c.status = 'CANCELED' THEN 'CANCELED'
                            WHEN SYSTIMESTAMP < c.start_at THEN 'SCHEDULED'
                            WHEN SYSTIMESTAMP > c.end_at THEN 'ENDED'
                            ELSE 'ONGOING'
@@ -77,18 +86,30 @@ public class CompetitionService {
                        c.end_at,
                        c.initial_seed_money,
                        c.max_participants,
-                       COUNT(cp.competition_id) AS participant_count
+                       c.is_public,
+                       COUNT(CASE WHEN cp.participation_status = 'JOINED' THEN 1 END) AS participant_count
                 FROM competitions c
                 LEFT JOIN competition_participants cp
                   ON c.competition_id = cp.competition_id
                 WHERE c.competition_id = ?
-                GROUP BY c.competition_id, c.title, c.description,
-                         c.start_at, c.end_at, c.initial_seed_money, c.max_participants
+                  AND (? = 1 OR c.is_public = 1)
+                GROUP BY c.competition_id,
+                         c.title,
+                         c.description,
+                         c.status,
+                         c.start_at,
+                         c.end_at,
+                         c.initial_seed_money,
+                         c.max_participants,
+                         c.is_public
                 """;
 
         List<CompetitionDetailResponseDto> result = jdbcTemplate.query(
                 sql,
-                new Object[]{competitionId},
+                ps -> {
+                    ps.setLong(1, competitionId);
+                    ps.setInt(2, isAdmin ? 1 : 0);
+                },
                 (rs, rowNum) -> new CompetitionDetailResponseDto(
                         rs.getLong("competition_id"),
                         rs.getString("title"),
@@ -98,13 +119,14 @@ public class CompetitionService {
                         toLocalDateTime(rs.getTimestamp("end_at")),
                         rs.getBigDecimal("initial_seed_money"),
                         rs.getObject("max_participants") != null ? rs.getInt("max_participants") : null,
-                        rs.getInt("participant_count")
+                        rs.getInt("participant_count"),
+                        rs.getInt("is_public") == 1
                 )
         );
 
         return result.stream()
                 .findFirst()
-                .orElseThrow(() -> new RuntimeException("존재하지 않는 대회입니다."));
+                .orElseThrow(() -> new RuntimeException("존재하지 않거나 비공개된 대회입니다."));
     }
 
     @Transactional
@@ -113,6 +135,7 @@ public class CompetitionService {
                 SELECT COUNT(*)
                 FROM competition_participants
                 WHERE competition_id = ? AND user_id = ?
+                  AND participation_status = 'JOINED'
                 """;
 
         Integer count = jdbcTemplate.queryForObject(
@@ -129,11 +152,13 @@ public class CompetitionService {
         String competitionSql = """
                 SELECT title,
                        initial_seed_money,
+                       is_public,
                        CASE
+                           WHEN status = 'CANCELED' THEN 'CANCELED'
                            WHEN SYSTIMESTAMP < start_at THEN 'SCHEDULED'
                            WHEN SYSTIMESTAMP > end_at THEN 'ENDED'
                            ELSE 'ONGOING'
-                       END AS status
+                       END AS display_status
                 FROM competitions
                 WHERE competition_id = ?
                 """;
@@ -148,7 +173,18 @@ public class CompetitionService {
 
         String title = (String) competition.get("TITLE");
         BigDecimal initialSeedMoney = (BigDecimal) competition.get("INITIAL_SEED_MONEY");
-        String status = (String) competition.get("STATUS");
+        String status = (String) competition.get("DISPLAY_STATUS");
+        Integer isPublic = competition.get("IS_PUBLIC") == null
+                ? 1
+                : ((Number) competition.get("IS_PUBLIC")).intValue();
+
+        if (isPublic != 1) {
+            throw new RuntimeException("비공개 대회에는 참가할 수 없습니다.");
+        }
+
+        if ("CANCELED".equalsIgnoreCase(status)) {
+            throw new RuntimeException("취소된 대회에는 참가할 수 없습니다.");
+        }
 
         if ("SCHEDULED".equalsIgnoreCase(status)) {
             throw new RuntimeException("아직 시작되지 않은 대회에는 참가할 수 없습니다.");
@@ -219,6 +255,7 @@ public class CompetitionService {
                 SELECT competition_id
                 FROM competition_participants
                 WHERE user_id = ?
+                  AND participation_status = 'JOINED'
                 ORDER BY competition_id
                 """;
 
@@ -250,10 +287,11 @@ public class CompetitionService {
                     initial_seed_money,
                     max_participants,
                     status,
+                    is_public,
                     created_by_admin_id,
                     created_at,
                     updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, SYSTIMESTAMP, SYSTIMESTAMP)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, SYSTIMESTAMP, SYSTIMESTAMP)
                 """;
 
         jdbcTemplate.update(
@@ -283,7 +321,7 @@ public class CompetitionService {
             throw new RuntimeException("존재하지 않는 대회입니다.");
         }
 
-        Integer participantCount = getParticipantCount(competitionId);
+        Integer participantCount = getJoinedParticipantCount(competitionId);
 
         Map<String, Object> current = jdbcTemplate.queryForMap(
                 """
@@ -300,6 +338,11 @@ public class CompetitionService {
         Integer currentMaxParticipants = current.get("MAX_PARTICIPANTS") != null
                 ? ((Number) current.get("MAX_PARTICIPANTS")).intValue()
                 : null;
+        String currentStatus = (String) current.get("STATUS");
+
+        if ("CANCELED".equalsIgnoreCase(currentStatus)) {
+            throw new RuntimeException("취소된 대회는 수정할 수 없습니다.");
+        }
 
         if (participantCount != null && participantCount > 0) {
             boolean changedRestrictedField =
@@ -359,28 +402,126 @@ public class CompetitionService {
     }
 
     @Transactional
-    public void deleteCompetition(Long competitionId) {
-        String existsSql = "SELECT COUNT(*) FROM competitions WHERE competition_id = ?";
-        Integer exists = jdbcTemplate.queryForObject(existsSql, Integer.class, competitionId);
+    public void updateCompetitionVisibility(Long competitionId, boolean isPublic) {
+        Map<String, Object> competition = getCompetitionRow(competitionId);
 
-        if (exists == null || exists == 0) {
-            throw new RuntimeException("존재하지 않는 대회입니다.");
-        }
+        String displayStatus = resolveDisplayStatus(
+                (String) competition.get("STATUS"),
+                toLocalDateTime((Timestamp) competition.get("START_AT")),
+                toLocalDateTime((Timestamp) competition.get("END_AT"))
+        );
 
-        Integer participantCount = getParticipantCount(competitionId);
-        if (participantCount != null && participantCount > 0) {
-            throw new RuntimeException("참가자가 존재하는 대회는 삭제할 수 없습니다.");
+        if ("ONGOING".equalsIgnoreCase(displayStatus)) {
+            throw new RuntimeException("진행중인 대회는 공개/비공개를 변경할 수 없습니다.");
         }
 
         jdbcTemplate.update(
-                "DELETE FROM competitions WHERE competition_id = ?",
+                """
+                UPDATE competitions
+                SET is_public = ?, updated_at = SYSTIMESTAMP
+                WHERE competition_id = ?
+                """,
+                isPublic ? 1 : 0,
                 competitionId
         );
     }
 
-    private Integer getParticipantCount(Long competitionId) {
+    @Transactional
+    public void deleteCompetition(Long competitionId) {
+        Map<String, Object> competition = getCompetitionRow(competitionId);
+
+        String storedStatus = (String) competition.get("STATUS");
+        LocalDateTime startAt = toLocalDateTime((Timestamp) competition.get("START_AT"));
+        LocalDateTime endAt = toLocalDateTime((Timestamp) competition.get("END_AT"));
+        String displayStatus = resolveDisplayStatus(storedStatus, startAt, endAt);
+
+        Integer participantCount = getJoinedParticipantCount(competitionId);
+
+        if ("ONGOING".equalsIgnoreCase(displayStatus) && participantCount != null && participantCount > 0) {
+            throw new RuntimeException("참가자가 있는 진행중 대회는 삭제할 수 없습니다.");
+        }
+
+        if ("ONGOING".equalsIgnoreCase(displayStatus) && (participantCount == null || participantCount == 0)) {
+            jdbcTemplate.update(
+                    """
+                    UPDATE competitions
+                    SET status = 'CANCELED',
+                        is_public = 0,
+                        updated_at = SYSTIMESTAMP
+                    WHERE competition_id = ?
+                    """,
+                    competitionId
+            );
+            return;
+        }
+
+        if ("SCHEDULED".equalsIgnoreCase(displayStatus)) {
+            jdbcTemplate.update(
+                    """
+                    UPDATE competitions
+                    SET status = 'CANCELED',
+                        is_public = 0,
+                        updated_at = SYSTIMESTAMP
+                    WHERE competition_id = ?
+                    """,
+                    competitionId
+            );
+
+            if (participantCount != null && participantCount > 0) {
+                jdbcTemplate.update(
+                        """
+                        UPDATE competition_participants
+                        SET participation_status = 'CANCELED'
+                        WHERE competition_id = ?
+                          AND participation_status = 'JOINED'
+                        """,
+                        competitionId
+                );
+            }
+            return;
+        }
+
+        if ("ENDED".equalsIgnoreCase(displayStatus) || "CANCELED".equalsIgnoreCase(displayStatus)) {
+            jdbcTemplate.update(
+                    """
+                    UPDATE competitions
+                    SET is_public = 0,
+                        updated_at = SYSTIMESTAMP
+                    WHERE competition_id = ?
+                    """,
+                    competitionId
+            );
+            return;
+        }
+
+        throw new RuntimeException("삭제할 수 없는 대회입니다.");
+    }
+
+    private Map<String, Object> getCompetitionRow(Long competitionId) {
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                """
+                SELECT competition_id, start_at, end_at, status, is_public
+                FROM competitions
+                WHERE competition_id = ?
+                """,
+                competitionId
+        );
+
+        if (rows.isEmpty()) {
+            throw new RuntimeException("존재하지 않는 대회입니다.");
+        }
+
+        return rows.get(0);
+    }
+
+    private Integer getJoinedParticipantCount(Long competitionId) {
         return jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM competition_participants WHERE competition_id = ?",
+                """
+                SELECT COUNT(*)
+                FROM competition_participants
+                WHERE competition_id = ?
+                  AND participation_status = 'JOINED'
+                """,
                 Integer.class,
                 competitionId
         );
@@ -423,6 +564,13 @@ public class CompetitionService {
         return "ONGOING";
     }
 
+    private String resolveDisplayStatus(String storedStatus, LocalDateTime startAt, LocalDateTime endAt) {
+        if ("CANCELED".equalsIgnoreCase(storedStatus)) {
+            return "CANCELED";
+        }
+        return resolveStatus(startAt, endAt);
+    }
+
     private boolean equalsInteger(Integer a, Integer b) {
         if (a == null && b == null) return true;
         if (a == null || b == null) return false;
@@ -463,32 +611,32 @@ public class CompetitionService {
 
     public List<CompetitionRankingResponseDto> getCompetitionRanking(Long competitionId) {
         String statusSql = """
-                SELECT CASE
-                           WHEN SYSTIMESTAMP < start_at THEN 'SCHEDULED'
-                           WHEN SYSTIMESTAMP > end_at THEN 'ENDED'
-                           ELSE 'ONGOING'
-                       END AS status
+                SELECT status, start_at, end_at, is_public
                 FROM competitions
                 WHERE competition_id = ?
                 """;
 
-        List<String> statuses = jdbcTemplate.query(
-                statusSql,
-                new Object[]{competitionId},
-                (rs, rowNum) -> rs.getString("status")
-        );
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(statusSql, competitionId);
 
-        if (statuses.isEmpty()) {
+        if (rows.isEmpty()) {
             throw new RuntimeException("존재하지 않는 대회입니다.");
         }
 
-        String status = statuses.get(0);
+        Map<String, Object> row = rows.get(0);
+        String status = resolveDisplayStatus(
+                (String) row.get("STATUS"),
+                toLocalDateTime((Timestamp) row.get("START_AT")),
+                toLocalDateTime((Timestamp) row.get("END_AT"))
+        );
 
         if ("SCHEDULED".equalsIgnoreCase(status)) {
             throw new RuntimeException("예정된 대회는 랭킹을 조회할 수 없습니다.");
         }
 
-        // [수정] 현금 잔고 + 주식 평가액(현재가 * 수량)을 합산하여 총 자산 산출
+        if ("CANCELED".equalsIgnoreCase(status)) {
+            throw new RuntimeException("취소된 대회는 랭킹을 조회할 수 없습니다.");
+        }
+
         String sql = """
         SELECT
             u.user_id,
@@ -510,13 +658,13 @@ public class CompetitionService {
         JOIN accounts a ON cp.account_id = a.account_id
         JOIN competitions c ON cp.competition_id = c.competition_id
         LEFT JOIN (
-            -- 계좌별 보유 주식의 현재 가치 합산
             SELECT h.account_id, SUM(h.quantity * s.current_price) AS total_stock_eval
             FROM holdings h
             JOIN stock s ON h.stock_id = s.stock_id
             GROUP BY h.account_id
         ) h_agg ON a.account_id = h_agg.account_id
         WHERE cp.competition_id = ?
+          AND cp.participation_status = 'JOINED'
         ORDER BY return_rate DESC
         """;
 

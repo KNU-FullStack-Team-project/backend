@@ -6,10 +6,11 @@ import lombok.Getter;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 @Getter
 @AllArgsConstructor
 public class CompetitionListResponseDto {
-
     private Long competitionId;
     private String title;
     private String description;
@@ -19,4 +20,7 @@ public class CompetitionListResponseDto {
     private BigDecimal initialSeedMoney;
     private Integer maxParticipants;
     private Integer participantCount;
+
+    @JsonProperty("isPublic")
+    private boolean isPublic;
 }
