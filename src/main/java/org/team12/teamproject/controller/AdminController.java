@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.team12.teamproject.dto.AdminUpdateUserRequestDto;
+import org.team12.teamproject.dto.AdminLoginLogItemDto;
 import org.team12.teamproject.dto.AdminReportItemDto;
 import org.team12.teamproject.dto.UserActivityItemDto;
 import org.team12.teamproject.dto.UserProfileResponseDto;
@@ -41,6 +42,11 @@ public class AdminController {
     @GetMapping("/users/{userId}/activities")
     public ResponseEntity<List<UserActivityItemDto>> getUserActivities(@PathVariable Long userId) {
         return ResponseEntity.ok(userActivityService.getUserActivities(userId));
+    }
+
+    @GetMapping("/login-logs")
+    public ResponseEntity<List<AdminLoginLogItemDto>> getLoginLogs() {
+        return ResponseEntity.ok(userActivityService.getLoginLogs());
     }
 
     @GetMapping("/reports")
