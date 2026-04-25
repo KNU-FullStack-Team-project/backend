@@ -82,5 +82,3 @@ jobs:
           # 전송받은 파일로 이미지 빌드 및 실행
           sudo docker build -t team-backend .
           sudo docker run -d -p 8081:8081 --name my-backend team-backend
-
-#test
