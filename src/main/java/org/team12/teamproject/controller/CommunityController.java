@@ -142,8 +142,8 @@ public class CommunityController {
 
     @PostMapping("/posts/{postId}/dislike")
     public ResponseEntity<?> dislikePost(
-        @PathVariable Long postId,
-        Authentication authentication
+            @PathVariable Long postId,
+            Authentication authentication
     ) {
         try {
             if (authentication == null || authentication.getName() == null) {
@@ -238,6 +238,40 @@ public class CommunityController {
             String email = authentication.getName();
             Long commentId = communityService.createComment(postId, request, email);
             return ResponseEntity.ok(commentId);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    @PostMapping("/comments/{commentId}/like")
+    public ResponseEntity<?> likeComment(
+            @PathVariable Long commentId,
+            Authentication authentication
+    ) {
+        try {
+            if (authentication == null || authentication.getName() == null) {
+                return ResponseEntity.status(401).body("로그인이 필요합니다.");
+            }
+
+            communityService.likeComment(commentId, authentication.getName());
+            return ResponseEntity.ok("댓글 추천이 반영되었습니다.");
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    @PostMapping("/comments/{commentId}/dislike")
+    public ResponseEntity<?> dislikeComment(
+            @PathVariable Long commentId,
+            Authentication authentication
+    ) {
+        try {
+            if (authentication == null || authentication.getName() == null) {
+                return ResponseEntity.status(401).body("로그인이 필요합니다.");
+            }
+
+            communityService.dislikeComment(commentId, authentication.getName());
+            return ResponseEntity.ok("댓글 비추천이 반영되었습니다.");
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(e.getMessage());
         }

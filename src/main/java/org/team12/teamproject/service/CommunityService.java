@@ -15,6 +15,7 @@ import org.team12.teamproject.dto.CommunityReportRequestDto;
 import org.team12.teamproject.entity.Board;
 import org.team12.teamproject.entity.Comment;
 import org.team12.teamproject.entity.CommentReport;
+import org.team12.teamproject.entity.CommentVote;
 import org.team12.teamproject.entity.Post;
 import org.team12.teamproject.entity.PostAttachment;
 import org.team12.teamproject.entity.PostLike;
@@ -23,6 +24,7 @@ import org.team12.teamproject.entity.Stock;
 import org.team12.teamproject.entity.User;
 import org.team12.teamproject.repository.BoardRepository;
 import org.team12.teamproject.repository.CommentReportRepository;
+import org.team12.teamproject.repository.CommentVoteRepository;
 import org.team12.teamproject.repository.CommentRepository;
 import org.team12.teamproject.repository.OrderRepository;
 import org.team12.teamproject.repository.PostAttachmentRepository;
@@ -61,6 +63,7 @@ public class CommunityService {
     private final PostLikeRepository postLikeRepository;
     private final PostReportRepository postReportRepository;
     private final CommentReportRepository commentReportRepository;
+    private final CommentVoteRepository commentVoteRepository;
     private final PostAttachmentRepository postAttachmentRepository;
     private final UserActivityAuditLogger userActivityAuditLogger;
 
@@ -254,18 +257,17 @@ public class CommunityService {
 
         Stock stock = post.getStock();
 
-        List<CommunityCommentResponseDto> comments = (isAdmin
+        User loginUser = null;
+        if (email != null) {
+            loginUser = userRepository.findByEmail(email).orElse(null);
+        }
+        Long loginUserId = loginUser != null ? loginUser.getId() : null;
+
+        List<Comment> commentList = isAdmin
                 ? commentRepository.findByPostIdOrderByCreatedAtAsc(postId)
-                : commentRepository.findByPostIdAndStatusOrderByCreatedAtAsc(postId, "NORMAL"))
-                .stream()
-                .map(comment -> CommunityCommentResponseDto.builder()
-                        .commentId(comment.getId())
-                        .userId(comment.getUser().getId())
-                        .nickname(comment.getUser().getNickname())
-                        .content(comment.getContent())
-                        .createdAt(comment.getCreatedAt())
-                        .build())
-                .toList();
+                : commentRepository.findByPostIdAndStatusOrderByCreatedAtAsc(postId, "NORMAL");
+
+        List<CommunityCommentResponseDto> comments = buildCommentTree(commentList, loginUserId);
 
         List<CommunityAttachmentResponseDto> attachments = postAttachmentRepository
                 .findByPostIdOrderByCreatedAtAsc(postId)
@@ -284,18 +286,15 @@ public class CommunityService {
         boolean votedByCurrentUser = false;
         String myVoteType = null;
 
-        if (email != null) {
-            User loginUser = userRepository.findByEmail(email).orElse(null);
-            if (loginUser != null) {
-                PostLike myVote = postLikeRepository
-                        .findByPostIdAndUserId(postId, loginUser.getId())
-                        .orElse(null);
+        if (loginUser != null) {
+            PostLike myVote = postLikeRepository
+                    .findByPostIdAndUserId(postId, loginUser.getId())
+                    .orElse(null);
 
-                if (myVote != null) {
-                    votedByCurrentUser = true;
-                    myVoteType = myVote.getVoteType();
-                    likedByCurrentUser = PostLike.VOTE_TYPE_LIKE.equals(myVote.getVoteType());
-                }
+            if (myVote != null) {
+                votedByCurrentUser = true;
+                myVoteType = myVote.getVoteType();
+                likedByCurrentUser = PostLike.VOTE_TYPE_LIKE.equals(myVote.getVoteType());
             }
         }
 
@@ -311,11 +310,13 @@ public class CommunityService {
                 .content(post.getContent())
                 .commentCount(post.getCommentCount())
                 .likeCount(post.getLikeCount())
-                        .dislikeCount(post.getDislikeCount())
+                .dislikeCount(post.getDislikeCount())
                 .viewCount(post.getViewCount())
                 .isNotice(post.getIsNotice())
                 .createdAt(post.getCreatedAt())
                 .likedByCurrentUser(likedByCurrentUser)
+                .votedByCurrentUser(votedByCurrentUser)
+                .myVoteType(myVoteType)
                 .comments(comments)
                 .attachments(attachments)
                 .build();
@@ -414,11 +415,27 @@ public class CommunityService {
             throw new IllegalArgumentException("댓글 내용을 입력해주세요.");
         }
 
+        Comment parentComment = null;
+        if (request.getParentCommentId() != null) {
+            parentComment = commentRepository.findByIdAndStatus(request.getParentCommentId(), "NORMAL")
+                    .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 부모 댓글입니다."));
+
+            if (!parentComment.getPost().getId().equals(post.getId())) {
+                throw new IllegalArgumentException("같은 게시글의 댓글에만 답글을 작성할 수 있습니다.");
+            }
+
+            if (parentComment.getParentComment() != null) {
+                throw new IllegalArgumentException("답글에는 답글을 작성할 수 없습니다.");
+            }
+        }
+
         Comment comment = Comment.builder()
                 .post(post)
                 .user(user)
-                .parentComment(null)
+                .parentComment(parentComment)
                 .content(request.getContent().trim())
+                .likeCount(0)
+                .dislikeCount(0)
                 .status("NORMAL")
                 .createdAt(LocalDateTime.now())
                 .updatedAt(LocalDateTime.now())
@@ -430,7 +447,7 @@ public class CommunityService {
         userActivityAuditLogger.log(
                 user.getId(),
                 user.getEmail(),
-                "COMMENT_CREATE",
+                parentComment == null ? "COMMENT_CREATE" : "REPLY_CREATE",
                 "COMMENT",
                 String.valueOf(commentId),
                 abbreviateForLog(comment.getContent())
@@ -441,16 +458,63 @@ public class CommunityService {
 
     @Transactional(readOnly = true)
     public List<CommunityCommentResponseDto> getComments(Long postId) {
-        return commentRepository.findByPostIdAndStatusOrderByCreatedAtAsc(postId, "NORMAL")
-                .stream()
-                .map(comment -> CommunityCommentResponseDto.builder()
-                        .commentId(comment.getId())
-                        .userId(comment.getUser().getId())
-                        .nickname(comment.getUser().getNickname())
-                        .content(comment.getContent())
-                        .createdAt(comment.getCreatedAt())
-                        .build())
-                .toList();
+        return buildCommentTree(
+                commentRepository.findByPostIdAndStatusOrderByCreatedAtAsc(postId, "NORMAL"),
+                null
+        );
+    }
+
+    @Transactional
+    public void likeComment(Long commentId, String email) {
+        voteComment(commentId, email, CommentVote.VOTE_TYPE_LIKE);
+    }
+
+    @Transactional
+    public void dislikeComment(Long commentId, String email) {
+        voteComment(commentId, email, CommentVote.VOTE_TYPE_DISLIKE);
+    }
+
+    private void voteComment(Long commentId, String email, String voteType) {
+        Comment comment = commentRepository.findByIdAndStatus(commentId, "NORMAL")
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 댓글입니다."));
+
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 사용자입니다."));
+
+        if (comment.getUser().getId().equals(user.getId())) {
+            throw new IllegalArgumentException("본인 댓글은 추천/비추천할 수 없습니다.");
+        }
+
+        boolean alreadyVoted = commentVoteRepository.existsByCommentIdAndUserId(commentId, user.getId());
+        if (alreadyVoted) {
+            throw new IllegalArgumentException("이미 추천 또는 비추천한 댓글입니다.");
+        }
+
+        CommentVote commentVote = CommentVote.builder()
+                .comment(comment)
+                .user(user)
+                .voteType(voteType)
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        commentVoteRepository.save(commentVote);
+
+        if (CommentVote.VOTE_TYPE_LIKE.equals(voteType)) {
+            comment.increaseLikeCount();
+        } else if (CommentVote.VOTE_TYPE_DISLIKE.equals(voteType)) {
+            comment.increaseDislikeCount();
+        } else {
+            throw new IllegalArgumentException("올바르지 않은 투표 타입입니다.");
+        }
+
+        userActivityAuditLogger.log(
+                user.getId(),
+                user.getEmail(),
+                CommentVote.VOTE_TYPE_LIKE.equals(voteType) ? "COMMENT_LIKE" : "COMMENT_DISLIKE",
+                "COMMENT",
+                String.valueOf(comment.getId()),
+                abbreviateForLog(comment.getContent())
+        );
     }
 
     @Transactional
@@ -696,6 +760,58 @@ public class CommunityService {
                         .createdAt(post.getCreatedAt())
                         .build())
                 .toList();
+    }
+
+    private List<CommunityCommentResponseDto> buildCommentTree(List<Comment> comments, Long loginUserId) {
+        List<CommunityCommentResponseDto> rootComments = new ArrayList<>();
+
+        for (Comment comment : comments) {
+            if (comment.getParentComment() == null) {
+                List<CommunityCommentResponseDto> replies = comments.stream()
+                        .filter(reply -> reply.getParentComment() != null)
+                        .filter(reply -> reply.getParentComment().getId().equals(comment.getId()))
+                        .map(reply -> toCommentResponseDto(reply, loginUserId, List.of()))
+                        .toList();
+
+                rootComments.add(toCommentResponseDto(comment, loginUserId, replies));
+            }
+        }
+
+        return rootComments;
+    }
+
+    private CommunityCommentResponseDto toCommentResponseDto(
+            Comment comment,
+            Long loginUserId,
+            List<CommunityCommentResponseDto> replies
+    ) {
+        String myVoteType = null;
+        boolean votedByCurrentUser = false;
+
+        if (loginUserId != null) {
+            CommentVote myVote = commentVoteRepository
+                    .findByCommentIdAndUserId(comment.getId(), loginUserId)
+                    .orElse(null);
+
+            if (myVote != null) {
+                votedByCurrentUser = true;
+                myVoteType = myVote.getVoteType();
+            }
+        }
+
+        return CommunityCommentResponseDto.builder()
+                .commentId(comment.getId())
+                .parentCommentId(comment.getParentComment() != null ? comment.getParentComment().getId() : null)
+                .userId(comment.getUser().getId())
+                .nickname(comment.getUser().getNickname())
+                .content(comment.getContent())
+                .likeCount(comment.getLikeCount())
+                .dislikeCount(comment.getDislikeCount())
+                .votedByCurrentUser(votedByCurrentUser)
+                .myVoteType(myVoteType)
+                .createdAt(comment.getCreatedAt())
+                .replies(replies)
+                .build();
     }
 
     private void validateReportReason(CommunityReportRequestDto request) {
