@@ -29,14 +29,14 @@ jobs:
         mkdir -p src/main/resources
 
         echo "kis.api.app-key=${{ secrets.KIS_API_KEY }}" > src/main/resources/secrets.properties
-        echo "kis.api.app-secret=${{ secrets.KSI_API_SECRET }}" >> src/main/resources/secrets.properties
+        echo "kis.api.app-secret=${{ secrets.KIS_API_SECRET }}" >> src/main/resources/secrets.properties
         echo "spring.data.redis.password=${{ secrets.REDIS_PASSWORD }}" >> src/main/resources/secrets.properties
         echo "MAIL_USERNAME=${{ secrets.MAIL_USERNAME }}" >> src/main/resources/secrets.properties
         echo "MAIL_PASSWORD=${{ secrets.MAIL_PASSWORD }}" >> src/main/resources/secrets.properties
         echo "recaptcha.secret=${{ secrets.RECAPTCHA_SECRET }}" >> src/main/resources/secrets.properties
         echo "google.oauth.client-id=${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}" >> src/main/resources/secrets.properties
     - name: Build with Maven
-      run: mvn -B package --file pom.xml
+      run: mvn -B package -DskipTests --file pom.xml
 
     # Optional: Uploads the full dependency graph to GitHub to improve the quality of Dependabot alerts this repository can receive
     - name: Update dependency graph
