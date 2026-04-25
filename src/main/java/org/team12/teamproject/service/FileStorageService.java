@@ -66,7 +66,7 @@ public class FileStorageService {
 
             file.transferTo(targetPath.toFile());
 
-            String fileUrl = "/uploads/" + subDir.replace("\\", "/") + "/" + storedName;
+            String fileUrl = "/api/uploads/" + subDir.replace("\\", "/") + "/" + storedName;
 
             return CommunityAttachmentResponseDto.builder()
                     .attachmentId(null)
@@ -104,7 +104,7 @@ public class FileStorageService {
 
             file.transferTo(targetPath.toFile());
 
-            String fileUrl = "/uploads/" + subDir.replace("\\", "/") + "/" + storedName;
+            String fileUrl = "/api/uploads/" + subDir.replace("\\", "/") + "/" + storedName;
 
             PostAttachment saved = postAttachmentRepository.save(
                     PostAttachment.builder()

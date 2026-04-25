@@ -36,24 +36,6 @@ jobs:
         echo "recaptcha.secret=${{ secrets.RECAPTCHA_SECRET }}" >> src/main/resources/secrets.properties
         echo "google.oauth.client-id=${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}" >> src/main/resources/secrets.properties
         
-    # - name: Verify secrets.properties creation
-    #   run: |
-    #     echo ">>> Project Root Directory:"
-    #     ls -F
-    #     echo ">>> Resources Directory Structure:"
-    #     ls -R src/main/resources
-    #     echo ">>> Checking if secrets.properties exists:"
-    #     if [ -f src/main/resources/secrets.properties ]; then
-    #       echo "SUCCESS: secrets.properties found."
-    #     else
-    #       echo "ERROR: secrets.properties NOT FOUND!"
-    #       exit 1
-    #     fi
-        
-    #     echo ">>> Current Directory:"
-    #     pwd
-    #     echo ">>> Resources Directory Listing:"
-    #     ls -R src/main/resources
     - name: Build with Maven
       run: |
         mvn -B package -DskipTests --file pom.xml
@@ -76,8 +58,13 @@ jobs:
         key: ${{ secrets.EC2_KEY }}
         script: |
           cd ~/teamproject
+          # 저장용 폴더들 생성
+          mkdir -p uploads profile
           # 기존 컨테이너가 있다면 삭제
           sudo docker rm -f my-backend || true
           # 전송받은 파일로 이미지 빌드 및 실행
           sudo docker build -t team-backend .
-          sudo docker run -d -p 8081:8081 --name my-backend team-backend
+          sudo docker run -d -p 8081:8081 --name my-backend \
+            -v ~/teamproject/uploads:/app/uploads \
+            -v ~/teamproject/profile:/app/profile \
+            team-backend
