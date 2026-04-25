@@ -9,9 +9,11 @@ import java.math.BigDecimal;
 @AllArgsConstructor
 public class CompetitionRankingResponseDto {
 
+    private Integer rank;
     private Long userId;
     private String nickname;
     private String profileImageUrl;
+    private BigDecimal totalAsset;
     private BigDecimal returnRate;
     private BigDecimal profitAmount;
 }
