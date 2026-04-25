@@ -68,7 +68,6 @@ jobs:
         # 빌드된 JAR 파일과 Dockerfile을 전송합니다.
         source: "target/*.jar,Dockerfile"
         target: "~/teamproject"
-        strip_components: 1 # backend/ 폴더 구조를 떼고 전송
     - name: Deploy on EC2
       uses: appleboy/ssh-action@master
       with:
