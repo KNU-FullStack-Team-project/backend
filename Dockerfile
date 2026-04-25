@@ -12,4 +12,4 @@ COPY target/*.jar app.jar
 EXPOSE 8081
 
 # 5. 실행 명령어
-ENTRYPOINT ["java", "-jar", "app.jar"]
+ENTRYPOINT ["java", "-Duser.timezone=Asia/Seoul", "-jar", "app.jar"]
