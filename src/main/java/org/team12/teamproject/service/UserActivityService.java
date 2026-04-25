@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.team12.teamproject.dto.AdminLoginLogItemDto;
 import org.team12.teamproject.dto.UserActivityItemDto;
 import org.team12.teamproject.entity.User;
 import org.team12.teamproject.repository.CommentRepository;
@@ -18,6 +19,9 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -56,6 +60,20 @@ public class UserActivityService {
 
         log.info("사용자 활동 로그 조회 완료: userId={}, activityCount={}", userId, activities.size());
         return activities;
+    }
+
+    @Transactional(readOnly = true)
+    public List<AdminLoginLogItemDto> getLoginLogs() {
+        Map<Long, User> userMap = userRepository.findAll().stream()
+                .collect(Collectors.toMap(User::getId, Function.identity()));
+
+        return readLogFiles()
+                .map(this::parseLine)
+                .flatMap(java.util.Optional::stream)
+                .filter(item -> "LOGIN".equals(item.action()) || "LOGOUT".equals(item.action()))
+                .sorted(Comparator.comparing(ParsedActivity::occurredAt).reversed())
+                .map(item -> toLoginLogDto(item, userMap))
+                .toList();
     }
 
     private Stream<String> readLogFiles() {
@@ -117,6 +135,21 @@ public class UserActivityService {
                 .targetLabel(toTargetLabel(activity.targetType(), activity.targetId()))
                 .detail(toDetailLabel(activity.action(), activity.detail(), user))
                 .occurredAt(activity.occurredAt().toString())
+                .build();
+    }
+
+    private AdminLoginLogItemDto toLoginLogDto(ParsedActivity activity, Map<Long, User> userMap) {
+        User user = null;
+        try {
+            user = userMap.get(Long.parseLong(activity.userId()));
+        } catch (NumberFormatException ignored) {
+        }
+
+        return AdminLoginLogItemDto.builder()
+                .occurredAt(activity.occurredAt().toString())
+                .nickname(user != null ? user.getNickname() : "-")
+                .loginId(activity.userEmail())
+                .actionLabel("LOGIN".equals(activity.action()) ? "로그인" : "로그아웃")
                 .build();
     }
 
