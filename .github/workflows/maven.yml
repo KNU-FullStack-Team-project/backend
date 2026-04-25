@@ -35,7 +35,29 @@ jobs:
         echo "MAIL_PASSWORD=${{ secrets.MAIL_PASSWORD }}" >> src/main/resources/secrets.properties
         echo "recaptcha.secret=${{ secrets.RECAPTCHA_SECRET }}" >> src/main/resources/secrets.properties
         echo "google.oauth.client-id=${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}" >> src/main/resources/secrets.properties
+        
+    - name: Verify secrets.properties creation
+      run: |
+        echo ">>> Project Root Directory:"
+        ls -F
+        echo ">>> Resources Directory Structure:"
+        ls -R src/main/resources
+        echo ">>> Checking if secrets.properties exists:"
+        if [ -f src/main/resources/secrets.properties ]; then
+          echo "SUCCESS: secrets.properties found."
+        else
+          echo "ERROR: secrets.properties NOT FOUND!"
+          exit 1
+        fi
+        
+        echo ">>> Current Directory:"
+        pwd
+        echo ">>> Resources Directory Listing:"
+        ls -R src/main/resources
     - name: Build with Maven
-      run: mvn -B package -DskipTests --file pom.xml
+      run: |
+        mvn -B package -DskipTests --file pom.xml
+        echo ">>> Target Directory Listing:"
+        ls -R target
 
 #test
