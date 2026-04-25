@@ -45,6 +45,9 @@ public class Post implements Serializable {
     @Column(name = "like_count", nullable = false)
     private Integer likeCount;
 
+    @Column(name = "dislike_count", nullable = false)
+    private Integer dislikeCount;
+
     @Column(name = "comment_count", nullable = false)
     private Integer commentCount;
 
@@ -100,6 +103,10 @@ public class Post implements Serializable {
     public void decreaseLikeCount() {
         int current = this.likeCount == null ? 0 : this.likeCount;
         this.likeCount = Math.max(0, current - 1);
+    }
+
+    public void increaseDislikeCount() {
+        this.dislikeCount = (this.dislikeCount == null ? 0 : this.dislikeCount) + 1;
     }
 
     public void increaseReportCount() {

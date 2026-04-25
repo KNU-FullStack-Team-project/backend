@@ -21,9 +21,14 @@ public class CommunityPostDetailResponseDto {
     private String content;
     private Integer commentCount;
     private Integer likeCount;
+    private Integer dislikeCount;
     private Integer viewCount;
     private LocalDateTime createdAt;
+
     private Boolean likedByCurrentUser;
+    private Boolean votedByCurrentUser;
+    private String myVoteType;
+
     private List<CommunityCommentResponseDto> comments;
     private Boolean isNotice;
     private List<CommunityAttachmentResponseDto> attachments;
