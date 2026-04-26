@@ -61,4 +61,4 @@ jobs:
           # 저장용 폴더들 생성
           mkdir -p backend/uploads backend/profile
           # 컴포즈를 통해 백엔드 컨테이너만 빌드 및 재시작
-          sudo docker-compose up --build -d backend
+          sudo docker compose up --build -d backend
