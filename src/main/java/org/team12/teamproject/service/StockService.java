@@ -684,7 +684,7 @@ public class StockService {
     /**
      * 전체 종목 시세를 순차적으로 갱신 (사용자 요청으로 주기를 1시간에서 30분으로 단축)
      */
-    @Scheduled(fixedDelay = 1800000) // 30분마다 전체 갱신
+    @Scheduled(fixedDelay = 3600000) // 1시간마다 전체 갱신 (부하 방지를 위해 주기 연장)
     public void updateAllStockPricesToRedis() {
         log.info(">>> [Scheduled] 전체 종목 시세 백그라운드 갱신 시작 (1000ms 간격)...");
         List<Stock> allStocks = stockRepository.findAll();
@@ -703,7 +703,11 @@ public class StockService {
                 dto.getChangeRate(),
                 dto.getVolume(),
                 dto.getBasePrice());
-        redisTemplate.opsForValue().set(cacheKey, value, Duration.ofMinutes(30));
+        try {
+            redisTemplate.opsForValue().set(cacheKey, value, Duration.ofMinutes(30));
+        } catch (Exception e) {
+            log.warn("Redis 시세 저장 실패 ({}): {}", dto.getSymbol(), e.getMessage());
+        }
         
         // [중요] DB의 시세 정보도 비동기적으로 업데이트하여 Fallback 시스템 유지
         try {
