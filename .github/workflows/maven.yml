@@ -49,7 +49,7 @@ jobs:
         key: ${{ secrets.EC2_KEY }}
         # 빌드된 JAR 파일과 Dockerfile을 전송합니다.
         source: "target/*.jar,Dockerfile"
-        target: "~/teamproject"
+        target: "~/teamproject/backend"
     - name: Deploy on EC2
       uses: appleboy/ssh-action@master
       with:
@@ -59,12 +59,6 @@ jobs:
         script: |
           cd ~/teamproject
           # 저장용 폴더들 생성
-          mkdir -p uploads profile
-          # 기존 컨테이너가 있다면 삭제
-          sudo docker rm -f my-backend || true
-          # 전송받은 파일로 이미지 빌드 및 실행
-          sudo docker build -t team-backend .
-          sudo docker run -d -p 8081:8081 --name my-backend \
-            -v ~/teamproject/uploads:/app/uploads \
-            -v ~/teamproject/profile:/app/profile \
-            team-backend
+          mkdir -p backend/uploads backend/profile
+          # 컴포즈를 통해 백엔드 컨테이너만 빌드 및 재시작
+          sudo docker-compose up --build -d backend
