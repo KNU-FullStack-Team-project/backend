@@ -37,6 +37,9 @@ public class UserController {
 
     private final UserService userService;
 
+    @org.springframework.beans.factory.annotation.Value("${cookie.secure}")
+    private boolean cookieSecure;
+
     @PostMapping("/signup")
     public ResponseEntity<String> signup(@RequestBody SignupRequestDto dto) {
         return ResponseEntity.ok(userService.signup(dto));
@@ -103,7 +106,7 @@ public class UserController {
             // 새 Access Token 쿠키 설정
             Cookie accessTokenCookie = new Cookie("accessToken", newAccessToken);
             accessTokenCookie.setHttpOnly(true);
-            accessTokenCookie.setSecure(true);
+            accessTokenCookie.setSecure(cookieSecure);
             accessTokenCookie.setPath("/");
             accessTokenCookie.setMaxAge(3600); // 1시간
             response.addCookie(accessTokenCookie);
@@ -130,7 +133,7 @@ public class UserController {
         if (loginResponse.getToken() != null) {
             Cookie accessTokenCookie = new Cookie("accessToken", loginResponse.getToken());
             accessTokenCookie.setHttpOnly(true);
-            accessTokenCookie.setSecure(true);
+            accessTokenCookie.setSecure(cookieSecure);
             accessTokenCookie.setPath("/");
             accessTokenCookie.setMaxAge(3600); // 1시간
             response.addCookie(accessTokenCookie);
@@ -139,7 +142,7 @@ public class UserController {
         if (loginResponse.getRefreshToken() != null) {
             Cookie refreshTokenCookie = new Cookie("refreshToken", loginResponse.getRefreshToken());
             refreshTokenCookie.setHttpOnly(true);
-            refreshTokenCookie.setSecure(true);
+            refreshTokenCookie.setSecure(cookieSecure);
             refreshTokenCookie.setPath("/");
             refreshTokenCookie.setMaxAge(7 * 24 * 3600); // 7일
             response.addCookie(refreshTokenCookie);

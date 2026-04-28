@@ -13,4 +13,4 @@ EXPOSE 8081
 
 # 5. 실행 명령어
 # 5. 실행 명령어 (t3.small 2GB 메모리에 최적화: 1GB 할당)
-ENTRYPOINT ["java", "-Xms1024m", "-Xmx1024m", "-Duser.timezone=Asia/Seoul", "-jar", "app.jar"]
+ENTRYPOINT ["java", "-Xms1024m", "-Xmx1024m", "-Dspring.profiles.active=prod", "-Duser.timezone=Asia/Seoul", "-jar", "app.jar"]
