@@ -30,8 +30,7 @@ public class PostReport {
     @Column(name = "reason", nullable = false, length = 255)
     private String reason;
 
-    @Lob
-    @Column(name = "detail")
+    @Column(name = "detail", length = 500)
     private String detail;
 
     @Column(name = "report_status", nullable = false, length = 20)

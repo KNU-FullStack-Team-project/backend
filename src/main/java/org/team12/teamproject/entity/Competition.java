@@ -21,6 +21,7 @@ public class Competition {
     @Column(name = "title", nullable = false, length = 200)
     private String title;
 
+    @Lob
     @Column(name = "description")
     private String description;
 
@@ -38,6 +39,9 @@ public class Competition {
 
     @Column(name = "status", nullable = false, length = 20)
     private String status;
+
+    @Column(name = "is_public", nullable = false)
+    private Integer isPublic;
 
     @Column(name = "created_by_admin_id", nullable = false)
     private Long createdByAdminId;
