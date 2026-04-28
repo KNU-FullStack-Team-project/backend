@@ -48,7 +48,9 @@ public interface StockRepository extends JpaRepository<Stock, Long> {
     @Query(value = "SELECT * FROM ( " +
                    "  SELECT a.*, ROWNUM rnum FROM ( " +
                    "    SELECT * FROM stock " +
-                   "    WHERE (stock_name LIKE %:keyword% OR stock_code LIKE %:keyword%) " +
+                   "    WHERE (UPPER(stock_name) LIKE UPPER('%' || :keyword || '%') " +
+                   "           OR stock_code LIKE '%' || :keyword || '%' " +
+                   "          ) " +
                    "    AND market_type != 'UNKNOWN' AND LENGTH(stock_code) = 6 " +
                    "    ORDER BY stock_name ASC " +
                    "  ) a WHERE ROWNUM <= 50 " +

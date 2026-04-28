@@ -281,7 +281,34 @@ public class StockService {
             return new ArrayList<>();
         }
 
-        List<Stock> searchResults = stockRepository.searchStocks(keyword);
+        String searchKeyword = keyword.trim().toUpperCase();
+
+        // 사용자 편의를 위한 공통 영문명 - 한글 발음 매핑 (부분 일치 치환)
+        searchKeyword = searchKeyword
+                .replace("엘지", "LG")
+                .replace("에스케이", "SK")
+                .replace("케이티", "KT")
+                .replace("에이치디", "HD")
+                .replace("엔에이치", "NH")
+                .replace("씨제이", "CJ")
+                .replace("지에스", "GS")
+                .replace("엘에스", "LS")
+                .replace("엘엑스", "LX")
+                .replace("디비", "DB")
+                .replace("에이치엘", "HL")
+                .replace("케이비", "KB")
+                .replace("케이씨씨", "KCC")
+                .replace("포스코", "POSCO")
+                .replace("제이와이피", "JYP")
+                .replace("와이지", "YG")
+                .replace("에스엠", "SM");
+
+        // NAVER 특별 예외 처리 (네, 네이, 네이버 등 짧은 단어도 정확히 매핑)
+        if (searchKeyword.equals("네") || searchKeyword.equals("네이") || searchKeyword.equals("네이버")) {
+            searchKeyword = "NAVER";
+        }
+
+        List<Stock> searchResults = stockRepository.searchStocks(searchKeyword);
         return searchResults.stream()
                 .map(s -> {
                     String cacheKey = "stock:price:" + s.getStockCode();
@@ -534,6 +561,8 @@ public class StockService {
                     startDate = now.minusDays(7).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else if ("1M".equals(period)) {
                     startDate = now.minusMonths(1).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                } else if ("3M".equals(period)) {
+                    startDate = now.minusMonths(3).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else if ("6M".equals(period)) {
                     periodCode = "M";
                     startDate = now.minusMonths(6).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
