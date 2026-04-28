@@ -28,9 +28,10 @@ public class StockController {
     public ResponseEntity<PageResponseDto<StockResponseDto>> getStockList(
             @RequestParam(name = "page", defaultValue = "1") int page,
             @RequestParam(name = "size", defaultValue = "20") int size,
-            @RequestParam(name = "industry", required = false) String industry
+            @RequestParam(name = "industry", required = false) String industry,
+            @RequestParam(name = "stockType", required = false) String stockType
     ) {
-        PageResponseDto<StockResponseDto> response = stockService.getStockList(page, size, industry);
+        PageResponseDto<StockResponseDto> response = stockService.getStockList(page, size, industry, stockType);
         return ResponseEntity.ok(response);
     }
 
