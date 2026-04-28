@@ -17,6 +17,7 @@ public class LoginResponseDto {
     private String role;
     private String message;
     private String token;
+    private String refreshToken;
     private Long accountId;
     private Boolean captchaRequired;
     private Boolean socialLogin;

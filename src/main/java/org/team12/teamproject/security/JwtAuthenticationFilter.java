@@ -2,6 +2,7 @@ package org.team12.teamproject.security;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -29,11 +30,23 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         // 1. 헤더에서 토큰 추출
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
-            token = authHeader.substring(7);
+            String headerToken = authHeader.substring(7);
+            if (headerToken != null && !headerToken.equals("null") && !headerToken.equals("undefined") && !headerToken.isEmpty()) {
+                token = headerToken;
+            }
         } 
         // 2. 헤더에 없고 SSE 구독 요청인 경우 쿼리 파라미터에서 추출
         else if (request.getRequestURI().contains("/api/notifications/subscribe")) {
             token = request.getParameter("token");
+        }
+        // 3. 쿠키에서 추출 (헤더에 없는 일반 요청)
+        else if (request.getCookies() != null) {
+            for (Cookie cookie : request.getCookies()) {
+                if ("accessToken".equals(cookie.getName())) {
+                    token = cookie.getValue();
+                    break;
+                }
+            }
         }
 
         if (token != null) {

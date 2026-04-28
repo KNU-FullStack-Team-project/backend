@@ -2,10 +2,12 @@ package org.team12.teamproject.service;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import java.util.concurrent.TimeUnit;
 import org.team12.teamproject.dto.AdminUpdateUserRequestDto;
 import org.team12.teamproject.dto.ChangeNicknameRequestDto;
 import org.team12.teamproject.dto.ChangePasswordRequestDto;
@@ -53,11 +55,14 @@ public class UserService {
     private final PasswordEncoder passwordEncoder;
     private final JdbcTemplate jdbcTemplate;
     private final JwtUtil jwtUtil;
+    private final StringRedisTemplate redisTemplate;
     private final RecaptchaService recaptchaService;
     private final UserActivityAuditLogger userActivityAuditLogger;
     private final GoogleTokenVerifierService googleTokenVerifierService;
 
     private final Map<String, Integer> loginFailureCounts = new ConcurrentHashMap<>();
+    private static final String RT_KEY_PREFIX = "RT:";
+    private static final long REFRESH_TOKEN_VALIDITY_DAYS = 7;
 
     @Transactional
     public String signup(SignupRequestDto dto) {
@@ -186,7 +191,17 @@ public class UserService {
         user.setUpdatedAt(LocalDateTime.now());
         userRepository.save(user);
 
-        String token = jwtUtil.generateToken(user.getEmail(), user.getRole());
+        String accessToken = jwtUtil.generateAccessToken(user.getEmail(), user.getRole());
+        String refreshToken = jwtUtil.generateRefreshToken(user.getEmail());
+
+        // Refresh Token Redis 저장
+        redisTemplate.opsForValue().set(
+                RT_KEY_PREFIX + user.getEmail(),
+                refreshToken,
+                REFRESH_TOKEN_VALIDITY_DAYS,
+                TimeUnit.DAYS
+        );
+
         List<Account> accounts = accountRepository.findByUserId(user.getId());
         Long accountId = accounts.isEmpty() ? null : accounts.get(0).getId();
 
@@ -206,7 +221,8 @@ public class UserService {
                 normalizeProfileImageUrl(user.getProfileImageUrl()),
                 user.getRole(),
                 "로그인 성공",
-                token,
+                accessToken,
+                refreshToken,
                 accountId,
                 false,
                 isSocialPasswordMarker(user.getPasswordHash())
@@ -739,14 +755,25 @@ public class UserService {
         }
     }
 
-    public String refreshToken(String email) {
+    public String refreshToken(String refreshToken) {
+        if (refreshToken == null || !jwtUtil.validateToken(refreshToken)) {
+            throw new RuntimeException("유효하지 않은 리프레시 토큰입니다.");
+        }
+        String email = jwtUtil.getEmailFromToken(refreshToken);
+        String savedToken = redisTemplate.opsForValue().get(RT_KEY_PREFIX + email);
+        if (savedToken == null || !savedToken.equals(refreshToken)) {
+            throw new RuntimeException("만료되었거나 유효하지 않은 세션입니다.");
+        }
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다."));
-        return jwtUtil.generateToken(user.getEmail(), user.getRole());
+        return jwtUtil.generateAccessToken(user.getEmail(), user.getRole());
     }
     public void logout(String email) {
+        if (email != null) {
+            redisTemplate.delete(RT_KEY_PREFIX + email);
+        }
         User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new RuntimeException("?ъ슜?먮? 李얠쓣 ???놁뒿?덈떎."));
+                .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다."));
 
         userActivityAuditLogger.log(
                 user.getId(),
@@ -806,7 +833,17 @@ public class UserService {
     private LoginResponseDto buildLoginResponse(User user, String message) {
         List<Account> accounts = accountRepository.findByUserId(user.getId());
         Long accountId = accounts.isEmpty() ? null : accounts.get(0).getId();
-        String token = jwtUtil.generateToken(user.getEmail(), user.getRole());
+        
+        String accessToken = jwtUtil.generateAccessToken(user.getEmail(), user.getRole());
+        String refreshToken = jwtUtil.generateRefreshToken(user.getEmail());
+
+        // Refresh Token Redis 저장
+        redisTemplate.opsForValue().set(
+                RT_KEY_PREFIX + user.getEmail(),
+                refreshToken,
+                REFRESH_TOKEN_VALIDITY_DAYS,
+                TimeUnit.DAYS
+        );
 
         userActivityAuditLogger.log(
                 user.getId(),
@@ -824,7 +861,8 @@ public class UserService {
                 normalizeProfileImageUrl(user.getProfileImageUrl()),
                 user.getRole(),
                 message,
-                token,
+                accessToken,
+                refreshToken,
                 accountId,
                 false,
                 isSocialPasswordMarker(user.getPasswordHash())
