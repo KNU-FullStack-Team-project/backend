@@ -170,14 +170,11 @@ public class StockService {
     /**
      * 주식 목록 조회 (페이징)
      */
-    public PageResponseDto<StockResponseDto> getStockList(int page, int size, String industry) {
-        // 프론트엔드에서 0 또는 1로 보낼 수 있으므로 안전하게 처리 (0-indexed 기준 지원)
-        int effectivePage = (page <= 0) ? 1 : page;
-        int lower = (effectivePage - 1) * size;
-        int upper = effectivePage * size;
-
-        List<Stock> stockList = stockRepository.findStocksNative(lower, upper, industry);
-        long totalElements = stockRepository.countValidStocks(industry);
+    public PageResponseDto<StockResponseDto> getStockList(int page, int size, String industry, String stockType) {
+        int lower = (page - 1) * size;
+        int upper = page * size;
+        List<Stock> stockList = stockRepository.findStocksNativeWithFilters(lower, upper, industry, stockType);
+        long totalElements = stockRepository.countValidStocksWithFilters(industry, stockType);
         int totalPages = (int) Math.ceil((double) totalElements / size);
 
         List<StockResponseDto> content = new ArrayList<>();
@@ -284,7 +281,52 @@ public class StockService {
             return new ArrayList<>();
         }
 
-        List<Stock> searchResults = stockRepository.searchStocks(keyword);
+        String searchKeyword = keyword.trim().toUpperCase();
+
+        // 사용자 편의를 위한 공통 영문명 - 한글 발음 매핑 (부분 일치 치환)
+        searchKeyword = searchKeyword
+                .replace("엘지", "LG")
+                .replace("에스케이", "SK")
+                .replace("케이티", "KT")
+                .replace("에이치디", "HD")
+                .replace("엔에이치", "NH")
+                .replace("씨제이", "CJ")
+                .replace("지에스", "GS")
+                .replace("엘에스", "LS")
+                .replace("엘엑스", "LX")
+                .replace("디비", "DB")
+                .replace("에이치엘", "HL")
+                .replace("케이비", "KB")
+                .replace("케이씨씨", "KCC")
+                .replace("포스코", "POSCO")
+                .replace("제이와이피", "JYP")
+                .replace("와이지", "YG")
+                .replace("에스엠", "SM");
+
+        // 사용자 편의를 위한 줄임말 및 별명 매핑
+        if (searchKeyword.equals("삼전")) {
+            searchKeyword = "삼성전자";
+        } else if (searchKeyword.equals("삼바")) {
+            searchKeyword = "삼성바이오로직스";
+        } else if (searchKeyword.equals("현차")) {
+            searchKeyword = "현대차";
+        } else if (searchKeyword.equals("하닉")) {
+            searchKeyword = "SK하이닉스";
+        } else if (searchKeyword.equals("하닉스")) {
+            searchKeyword = "SK하이닉스";
+        } else if (searchKeyword.equals("셀트")) {
+            searchKeyword = "셀트리온";
+        } else if (searchKeyword.equals("카카")) {
+            searchKeyword = "카카오";
+        } else if (searchKeyword.equals("에코")) {
+            searchKeyword = "에코프로";
+        } else if (searchKeyword.equals("에코비")) {
+            searchKeyword = "에코프로비엠";
+        } else if (searchKeyword.equals("네") || searchKeyword.equals("네이") || searchKeyword.equals("네이버")) {
+            searchKeyword = "NAVER";
+        }
+
+        List<Stock> searchResults = stockRepository.searchStocks(searchKeyword);
         return searchResults.stream()
                 .map(s -> {
                     String cacheKey = "stock:price:" + s.getStockCode();
@@ -529,7 +571,7 @@ public class StockService {
 
             if ("1D".equals(period)) {
                 // 당일 분봉 (최근 약 500개 봉)
-                resultData = fetchIntradayHistory(symbol, "0005");
+                resultData = fetchIntradayHistory(getRawCode(symbol), "0005");
             } else {
                 String periodCode = "D";
                 String startDate = now.minusMonths(3).format(DateTimeFormatter.ofPattern("yyyyMMdd")); // 기본 3개월
@@ -564,7 +606,7 @@ public class StockService {
 
                 String url = apiUrl + "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
                         + "?FID_COND_MRKT_DIV_CODE=J"
-                        + "&FID_INPUT_ISCD=" + symbol
+                        + "&FID_INPUT_ISCD=" + getRawCode(symbol)
                         + "&FID_INPUT_DATE_1=" + startDate
                         + "&FID_INPUT_DATE_2=" + endDate
                         + "&FID_PERIOD_DIV_CODE=" + periodCode
@@ -778,19 +820,24 @@ public class StockService {
         }
     }
 
+    private String getRawCode(String symbol) {
+        if (symbol == null) return null;
+        if (symbol.startsWith("K") || symbol.startsWith("Q")) {
+            return symbol.substring(1);
+        }
+        return symbol;
+    }
+
     /**
      * KIS API 호출
      */
     private StockResponseDto fetchPriceFromKisApi(String stockCode) {
+        String rawCode = getRawCode(stockCode);
+        String marketDiv = "J"; 
         try {
             ensureAccessToken();
 
-            // [최적화] 시장 구분 코드 처리 (기본: J)
-            String marketDiv = "J"; 
-            
-            String url = apiUrl
-                    + "/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=" + marketDiv 
-                    + "&FID_INPUT_ISCD=" + stockCode;
+            String url = apiUrl + "/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=" + marketDiv + "&FID_INPUT_ISCD=" + rawCode;
             
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
