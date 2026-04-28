@@ -23,7 +23,7 @@ public interface StockRepository extends JpaRepository<Stock, Long> {
 
     @Query(value = "SELECT DISTINCT s.stock_code " +
                    "FROM stock s " +
-                   "WHERE s.stock_code IN (SELECT stock_symbol FROM favorite_stocks) " +
+                   "WHERE s.stock_id IN (SELECT stock_id FROM favorite_stocks) " +
                    "OR s.stock_id IN (SELECT stock_id FROM holdings)", nativeQuery = true)
     List<String> findAllActiveStockCodes();
 
