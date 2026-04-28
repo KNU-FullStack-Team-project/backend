@@ -29,7 +29,7 @@ public class Account {
     @Column(name = "account_name", length = 100, nullable = false)
     private String accountName;
 
-    @Column(name = "cash_balance", precision = 18, scale = 2, nullable = false)
+    @Column(name = "balance", precision = 18, scale = 2, nullable = false)
     private BigDecimal cashBalance;
 
     @Column(name = "is_active", nullable = false)

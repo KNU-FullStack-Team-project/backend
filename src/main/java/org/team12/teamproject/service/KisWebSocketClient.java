@@ -32,7 +32,11 @@ public class KisWebSocketClient {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private WebSocketSession currentSession;
-    private final Set<String> subscribedSymbols = ConcurrentHashMap.newKeySet();
+    // LinkedHashMap(LRU)으로 구독 관리 (accessOrder = true)
+    private final Map<String, Long> subscribedSymbols = java.util.Collections.synchronizedMap(
+        new java.util.LinkedHashMap<String, Long>(50, 0.75f, true)
+    );
+    private static final int MAX_SUBSCRIPTIONS = 40; // KIS 모의투자 제한
     
     // 모의투자 실시간 웹소켓 URL
     private final String WS_URL = "ws://ops.koreainvestment.com:31000/tryitout/H0STCNT0";
@@ -69,43 +73,60 @@ public class KisWebSocketClient {
             return;
         }
 
-        if (subscribedSymbols.contains(symbol)) {
-            return; // 이미 구독 중
-        }
-
-        String approvalKey = authService.getApprovalKey();
-        if (approvalKey == null) {
-            log.warn("Approval Key 획득 실패로 구독 취소");
-            return;
-        }
-
         try {
-            Map<String, Object> header = new HashMap<>();
-            header.put("approval_key", approvalKey);
-            header.put("custtype", "P");
-            header.put("tr_type", "1"); // 1: 등록(구독)
-            header.put("content-type", "utf-8");
+            // 최대 구독 개수 초과 시 LRU 정책에 따라 가장 오래된 종목 해제
+            if (subscribedSymbols.size() >= MAX_SUBSCRIPTIONS && !subscribedSymbols.containsKey(symbol)) {
+                String oldestSymbol = subscribedSymbols.keySet().iterator().next();
+                unsubscribe(oldestSymbol);
+            }
 
-            Map<String, Object> input = new HashMap<>();
-            input.put("tr_id", "H0STCNT0");
-            input.put("tr_key", symbol);
-
-            Map<String, Object> body = new HashMap<>();
-            body.put("input", input);
-
-            Map<String, Object> request = new HashMap<>();
-            request.put("header", header);
-            request.put("body", body);
-
-            String payload = objectMapper.writeValueAsString(request);
-            currentSession.sendMessage(new TextMessage(payload));
-            
-            subscribedSymbols.add(symbol);
+            sendSubscriptionRequest(symbol, "1"); // 1: 등록(구독)
+            subscribedSymbols.put(symbol, System.currentTimeMillis());
             log.info(">>> 실시간 웹소켓 구독 요청 완료: {}", symbol);
 
         } catch (Exception e) {
             log.error("구독 송신 에러: {}", e.getMessage());
         }
+    }
+
+    /**
+     * 특정 종목의 실시간 시세 구독 해제
+     */
+    public void unsubscribe(String symbol) {
+        if (currentSession == null || !currentSession.isOpen()) return;
+        
+        try {
+            sendSubscriptionRequest(symbol, "2"); // 2: 해제
+            subscribedSymbols.remove(symbol);
+            log.info(">>> 실시간 웹소켓 구독 해제 완료: {}", symbol);
+        } catch (Exception e) {
+            log.error("구독 해제 송신 에러: {}", e.getMessage());
+        }
+    }
+
+    private void sendSubscriptionRequest(String symbol, String trType) throws Exception {
+        String approvalKey = authService.getApprovalKey();
+        if (approvalKey == null) return;
+
+        Map<String, Object> header = new HashMap<>();
+        header.put("approval_key", approvalKey);
+        header.put("custtype", "P");
+        header.put("tr_type", trType);
+        header.put("content-type", "utf-8");
+
+        Map<String, Object> input = new HashMap<>();
+        input.put("tr_id", "H0STCNT0");
+        input.put("tr_key", symbol);
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("input", input);
+
+        Map<String, Object> request = new HashMap<>();
+        request.put("header", header);
+        request.put("body", body);
+
+        String payload = objectMapper.writeValueAsString(request);
+        currentSession.sendMessage(new TextMessage(payload));
     }
 
     /**

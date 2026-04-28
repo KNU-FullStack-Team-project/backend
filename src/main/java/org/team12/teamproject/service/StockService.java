@@ -69,7 +69,7 @@ public class StockService {
 
     private static class StockUpdateTask implements Comparable<StockUpdateTask> {
         final String symbol;
-        final int priority; // 1: 실시간 단건(LazyLoad), 2: 활성 종목, 3: 전체 일반 종목
+        final int priority; // 1: 최우선(0원/단건조회), 2: 활성(보유/관심), 3: 상위(거래량), 4: 일반(전체)
         final long enqueueTime;
 
         StockUpdateTask(String symbol, int priority) {
@@ -170,14 +170,14 @@ public class StockService {
     /**
      * 주식 목록 조회 (페이징)
      */
-    public PageResponseDto<StockResponseDto> getStockList(int page, int size) {
+    public PageResponseDto<StockResponseDto> getStockList(int page, int size, String industry) {
         // 프론트엔드에서 0 또는 1로 보낼 수 있으므로 안전하게 처리 (0-indexed 기준 지원)
         int effectivePage = (page <= 0) ? 1 : page;
         int lower = (effectivePage - 1) * size;
         int upper = effectivePage * size;
 
-        List<Stock> stockList = stockRepository.findStocksNative(lower, upper);
-        long totalElements = stockRepository.countValidStocks();
+        List<Stock> stockList = stockRepository.findStocksNative(lower, upper, industry);
+        long totalElements = stockRepository.countValidStocks(industry);
         int totalPages = (int) Math.ceil((double) totalElements / size);
 
         List<StockResponseDto> content = new ArrayList<>();
@@ -195,7 +195,8 @@ public class StockService {
 
                 StockResponseDto.StockResponseDtoBuilder builder = StockResponseDto.builder()
                         .symbol(stock.getStockCode())
-                        .name(stock.getStockName());
+                        .name(stock.getStockName())
+                        .industry(stock.getIndustry());
 
                 if (cachedData != null) {
                     String[] parts = cachedData.split(":");
@@ -223,8 +224,16 @@ public class StockService {
                     builder.currentPrice("0").changeAmount("0").changeRate("0").volume("0").basePrice("0");
                 }
                 
-                content.add(builder.build());
-                enqueueUpdate(stock.getStockCode(), 1);
+                StockResponseDto dto = builder.build();
+                content.add(dto);
+
+                // [최적화] 데이터가 부실하거나 없는 경우 최우선(P1)으로 업데이트 예약
+                if (dto.getCurrentPrice().equals("0")) {
+                    enqueueUpdate(stock.getStockCode(), 1);
+                } else {
+                    // 리스트 노출 종목은 일반 우선순위(P3)로 최신화 유지
+                    enqueueUpdate(stock.getStockCode(), 3);
+                }
             }
         } catch (Exception e) {
             log.warn("주식 목록 조회 중 오류 (기본 정보로 대체): {}", e.getMessage());
@@ -232,6 +241,7 @@ public class StockService {
                     .map(s -> StockResponseDto.builder()
                             .symbol(s.getStockCode())
                             .name(s.getStockName())
+                            .industry(s.getIndustry())
                             .currentPrice("0")
                             .changeAmount("0")
                             .changeRate("0")
@@ -282,7 +292,8 @@ public class StockService {
                     
                     StockResponseDto.StockResponseDtoBuilder builder = StockResponseDto.builder()
                             .symbol(s.getStockCode())
-                            .name(s.getStockName());
+                            .name(s.getStockName())
+                            .industry(s.getIndustry());
 
                     if (cachedData != null) {
                         String[] parts = cachedData.split(":");
@@ -294,7 +305,16 @@ public class StockService {
                                    .basePrice(parts[4]);
                         }
                     } else {
-                        builder.currentPrice("0").changeAmount("0").changeRate("0").volume("0").basePrice("0");
+                        // Redis 캐시 미스 시 DB 데이터 Fallback
+                        if (s.getCurrentPrice() != null) {
+                            builder.currentPrice(s.getCurrentPrice().toString())
+                                   .changeAmount(s.getChangeAmount() != null ? s.getChangeAmount().toString() : "0")
+                                   .changeRate(s.getChangeRate() != null ? s.getChangeRate().toString() : "0")
+                                   .volume(s.getVolume() != null ? s.getVolume().toString() : "0")
+                                   .basePrice(s.getCurrentPrice().toString());
+                        } else {
+                            builder.currentPrice("0").changeAmount("0").changeRate("0").volume("0").basePrice("0");
+                        }
                         enqueueUpdate(s.getStockCode(), 1); // 검색 결과도 최우선으로 수집 요청
                     }
                     return builder.build();
@@ -407,6 +427,7 @@ public class StockService {
             return StockResponseDto.builder()
                     .symbol(stockCode)
                     .name(s.getStockName())
+                    .industry(s.getIndustry())
                     .currentPrice(s.getCurrentPrice().toString())
                     .changeAmount(s.getChangeAmount() != null ? s.getChangeAmount().toString() : "0")
                     .changeRate(s.getChangeRate() != null ? s.getChangeRate().toString() : "0")
@@ -675,8 +696,8 @@ public class StockService {
         }
 
         for (String symbol : activeCodes) {
-            webSocketClient.subscribe(symbol); // 실시간 구독이 풀렸을 수 있으니 재요청 (Client에서 중복 건너뜀)
-            enqueueUpdate(symbol, 2);
+            webSocketClient.subscribe(symbol); // 실시간 구독이 풀렸을 수 있으니 재요청
+            enqueueUpdate(symbol, 2); // 활성 종목은 High Priority(P2)
         }
         log.info(">>> [Scheduled] 활성 종목 시세 동기화 완료 (총 {}건)", activeCodes.size());
     }
@@ -690,7 +711,7 @@ public class StockService {
         List<Stock> allStocks = stockRepository.findAll();
 
         for (Stock stock : allStocks) {
-            enqueueUpdate(stock.getStockCode(), 3);
+            enqueueUpdate(stock.getStockCode(), 4); // 전체 종목은 Low Priority(P4)
         }
         log.info(">>> [Scheduled] 전체 종목 시세 백그라운드 갱신 완료");
     }
@@ -704,7 +725,9 @@ public class StockService {
                 dto.getVolume(),
                 dto.getBasePrice());
         try {
-            redisTemplate.opsForValue().set(cacheKey, value, Duration.ofMinutes(30));
+            // [최적화] 중요도에 따른 캐시 TTL 차등 적용
+            Duration ttl = Duration.ofMinutes(30); 
+            redisTemplate.opsForValue().set(cacheKey, value, ttl);
         } catch (Exception e) {
             log.warn("Redis 시세 저장 실패 ({}): {}", dto.getSymbol(), e.getMessage());
         }
@@ -855,6 +878,9 @@ public class StockService {
                 log.warn("Redis에 토큰 저장 실패: {}", e.getMessage());
             }
         }
+    }
+    public List<String> getAllIndustries() {
+        return stockRepository.findAllIndustries();
     }
 
     @org.springframework.transaction.annotation.Transactional

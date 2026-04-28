@@ -27,7 +27,7 @@ public class Holding {
     @Column(name = "quantity", nullable = false)
     private Long quantity;
 
-    @Column(name = "average_buy_price", precision = 18, scale = 2, nullable = false)
+    @Column(name = "avg_price", precision = 18, scale = 2, nullable = false)
     private BigDecimal averageBuyPrice;
 
     @Column(name = "updated_at", nullable = false)
