@@ -528,21 +528,36 @@ public class StockService {
             String endDate = now.format(DateTimeFormatter.ofPattern("yyyyMMdd"));
 
             if ("1D".equals(period)) {
+                // 당일 분봉 (최근 약 500개 봉)
                 resultData = fetchIntradayHistory(symbol, "0005");
             } else {
                 String periodCode = "D";
-                String startDate;
+                String startDate = now.minusMonths(3).format(DateTimeFormatter.ofPattern("yyyyMMdd")); // 기본 3개월
 
-                if ("1W".equals(period)) {
-                    startDate = now.minusDays(200).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                // 단일 문자 코드는 해당 단위의 전체 데이터를 의미함 (사용자 정의)
+                if ("W".equals(period)) {
+                    periodCode = "W";
+                    startDate = now.minusYears(2).format(DateTimeFormatter.ofPattern("yyyyMMdd")); // 주봉 2년
+                } else if ("M".equals(period)) {
+                    periodCode = "M";
+                    startDate = now.minusYears(5).format(DateTimeFormatter.ofPattern("yyyyMMdd")); // 월봉 5년
+                } else if ("D".equals(period)) {
+                    periodCode = "D";
+                    startDate = now.minusMonths(6).format(DateTimeFormatter.ofPattern("yyyyMMdd")); // 일봉 6개월
+                } 
+                // 기존 숫자형 코드들은 해당 기간의 '일봉'을 유지 (하위 호환성)
+                else if ("1W".equals(period)) {
+                    startDate = now.minusDays(7).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else if ("1M".equals(period)) {
-                    startDate = now.minusDays(200).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                    startDate = now.minusMonths(1).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                } else if ("3M".equals(period)) {
+                    startDate = now.minusMonths(3).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else if ("6M".equals(period)) {
                     periodCode = "M";
                     startDate = now.minusMonths(6).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else if ("1Y".equals(period)) {
                     periodCode = "D"; 
-                    startDate = now.minusYears(2).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                    startDate = now.minusYears(1).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else {
                     startDate = now.minusDays(30).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 }
