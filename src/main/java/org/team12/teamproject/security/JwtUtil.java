@@ -14,14 +14,24 @@ public class JwtUtil {
     // 실제 운영 시에는 환경 변수나 설정 파일에서 관리해야 합니다.
     private final String SECRET_KEY = "your-very-secure-and-long-secret-key-for-jwt-signing";
     private final Key key = Keys.hmacShaKeyFor(SECRET_KEY.getBytes());
-    private final long EXPIRATION_TIME = 3600000; // 1시간 (ms)
+    private final long ACCESS_EXPIRATION_TIME = 3600000; // 1시간 (ms)
+    private final long REFRESH_EXPIRATION_TIME = 7 * 24 * 3600000; // 7일 (ms)
 
-    public String generateToken(String email, String role) {
+    public String generateAccessToken(String email, String role) {
         return Jwts.builder()
                 .setSubject(email)
                 .claim("role", role)
                 .setIssuedAt(new Date())
-                .setExpiration(new Date(System.currentTimeMillis() + EXPIRATION_TIME))
+                .setExpiration(new Date(System.currentTimeMillis() + ACCESS_EXPIRATION_TIME))
+                .signWith(key, SignatureAlgorithm.HS256)
+                .compact();
+    }
+
+    public String generateRefreshToken(String email) {
+        return Jwts.builder()
+                .setSubject(email)
+                .setIssuedAt(new Date())
+                .setExpiration(new Date(System.currentTimeMillis() + REFRESH_EXPIRATION_TIME))
                 .signWith(key, SignatureAlgorithm.HS256)
                 .compact();
     }
