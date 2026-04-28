@@ -23,8 +23,8 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
         JOIN users u ON u.user_id = a.user_id
         WHERE u.user_id = :userId
           AND o.stock_id = :stockId
-          AND UPPER(o.order_type) = UPPER(:orderSide)
-          AND UPPER(o.status) = UPPER(:orderStatus)
+          AND UPPER(o.order_side) = UPPER(:orderSide)
+          AND UPPER(o.order_status) = UPPER(:orderStatus)
         """, nativeQuery = true)
     int existsByAccountUserIdAndStockIdAndOrderSideIgnoreCaseAndOrderStatusIgnoreCase(
             @Param("userId") Long userId,
