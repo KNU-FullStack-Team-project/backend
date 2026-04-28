@@ -170,14 +170,11 @@ public class StockService {
     /**
      * 주식 목록 조회 (페이징)
      */
-    public PageResponseDto<StockResponseDto> getStockList(int page, int size, String industry) {
-        // 프론트엔드에서 0 또는 1로 보낼 수 있으므로 안전하게 처리 (0-indexed 기준 지원)
-        int effectivePage = (page <= 0) ? 1 : page;
-        int lower = (effectivePage - 1) * size;
-        int upper = effectivePage * size;
-
-        List<Stock> stockList = stockRepository.findStocksNative(lower, upper, industry);
-        long totalElements = stockRepository.countValidStocks(industry);
+    public PageResponseDto<StockResponseDto> getStockList(int page, int size, String industry, String stockType) {
+        int lower = (page - 1) * size;
+        int upper = page * size;
+        List<Stock> stockList = stockRepository.findStocksNativeWithFilters(lower, upper, industry, stockType);
+        long totalElements = stockRepository.countValidStocksWithFilters(industry, stockType);
         int totalPages = (int) Math.ceil((double) totalElements / size);
 
         List<StockResponseDto> content = new ArrayList<>();
@@ -528,28 +525,26 @@ public class StockService {
             String endDate = now.format(DateTimeFormatter.ofPattern("yyyyMMdd"));
 
             if ("1D".equals(period)) {
-                resultData = fetchIntradayHistory(symbol, "0005");
+                resultData = fetchIntradayHistory(getRawCode(symbol), "0005");
             } else {
                 String periodCode = "D";
-                String startDate;
+                String startDate = now.minusDays(30).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
 
                 if ("1W".equals(period)) {
-                    startDate = now.minusDays(200).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                    startDate = now.minusDays(7).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else if ("1M".equals(period)) {
-                    startDate = now.minusDays(200).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                    startDate = now.minusMonths(1).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else if ("6M".equals(period)) {
                     periodCode = "M";
                     startDate = now.minusMonths(6).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else if ("1Y".equals(period)) {
                     periodCode = "D"; 
-                    startDate = now.minusYears(2).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-                } else {
-                    startDate = now.minusDays(30).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                    startDate = now.minusYears(1).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 }
 
                 String url = apiUrl + "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
                         + "?FID_COND_MRKT_DIV_CODE=J"
-                        + "&FID_INPUT_ISCD=" + symbol
+                        + "&FID_INPUT_ISCD=" + getRawCode(symbol)
                         + "&FID_INPUT_DATE_1=" + startDate
                         + "&FID_INPUT_DATE_2=" + endDate
                         + "&FID_PERIOD_DIV_CODE=" + periodCode
@@ -763,19 +758,24 @@ public class StockService {
         }
     }
 
+    private String getRawCode(String symbol) {
+        if (symbol == null) return null;
+        if (symbol.startsWith("K") || symbol.startsWith("Q")) {
+            return symbol.substring(1);
+        }
+        return symbol;
+    }
+
     /**
      * KIS API 호출
      */
     private StockResponseDto fetchPriceFromKisApi(String stockCode) {
+        String rawCode = getRawCode(stockCode);
+        String marketDiv = "J"; 
         try {
             ensureAccessToken();
 
-            // [최적화] 시장 구분 코드 처리 (기본: J)
-            String marketDiv = "J"; 
-            
-            String url = apiUrl
-                    + "/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=" + marketDiv 
-                    + "&FID_INPUT_ISCD=" + stockCode;
+            String url = apiUrl + "/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=" + marketDiv + "&FID_INPUT_ISCD=" + rawCode;
             
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
