@@ -54,6 +54,7 @@ public class UserActivityService {
                 .map(this::parseLine)
                 .flatMap(java.util.Optional::stream)
                 .filter(item -> String.valueOf(userId).equals(item.userId()))
+                .filter(item -> !item.action().startsWith("NOTIFICATION"))
                 .sorted(Comparator.comparing(ParsedActivity::occurredAt).reversed())
                 .map(item -> toDto(item, user))
                 .toList();
@@ -186,12 +187,14 @@ public class UserActivityService {
             case "COMMENT_CREATE" -> "댓글 작성";
             case "COMMENT_DELETE" -> "댓글 삭제";
             case "POST_LIKE" -> "게시글 추천";
+            case "ORDER_BUY" -> "주식 매수";
+            case "ORDER_SELL" -> "주식 매도";
+            case "PROFILE_NICKNAME_UPDATE" -> "닉네임 변경";
+            case "ACCOUNT_RESET" -> "기본 계좌 초기화";
             case "INQUIRY_CREATE" -> "문의 작성";
             case "INQUIRY_REPLY" -> "문의 답변";
             case "INQUIRY_READ" -> "문의 확인";
             case "REPORT_CREATE" -> "신고 접수";
-            case "NOTIFICATION_CREATE" -> "알림 생성";
-            case "NOTIFICATION_READ" -> "알림 확인";
             default -> action;
         };
     }
@@ -202,7 +205,8 @@ public class UserActivityService {
             case "INQUIRY" -> "문의";
             case "POST" -> "게시글";
             case "COMMENT" -> "댓글";
-            case "NOTIFICATION" -> "알림";
+            case "ORDER" -> "주문";
+            case "ACCOUNT" -> "계좌";
             default -> targetType;
         };
 
@@ -237,16 +241,24 @@ public class UserActivityService {
             return "게시글 추천 " + detail;
         }
 
+        if ("ORDER_BUY".equals(action) || "ORDER_SELL".equals(action)) {
+            return toOrderDetailLabel(action, detail);
+        }
+
+        if ("PROFILE_NICKNAME_UPDATE".equals(action)) {
+            return toNicknameUpdateDetailLabel(detail);
+        }
+
+        if ("ACCOUNT_RESET".equals(action)) {
+            return toAccountResetDetailLabel(detail);
+        }
+
         if ("INQUIRY_REPLY".equals(action) && detail.startsWith("answered_by_admin=")) {
             return "관리자 답변 등록";
         }
 
         if ("REPORT_CREATE".equals(action) && detail.startsWith("reason=")) {
             return "사유 " + detail.substring("reason=".length());
-        }
-
-        if ("NOTIFICATION_CREATE".equals(action)) {
-            return detail.replace("type=", "유형 ").replace(", title=", " / 제목 ");
         }
 
         if ("LOGIN".equals(action) && detail.startsWith("role=")) {
@@ -261,11 +273,53 @@ public class UserActivityService {
             return "문의 답변 확인";
         }
 
-        if ("NOTIFICATION_READ".equals(action)) {
-            return "mark_all_as_read".equals(detail) ? "알림 전체 읽음" : "알림 읽음";
-        }
-
         return detail;
+    }
+
+    private String toOrderDetailLabel(String action, String detail) {
+        Map<String, String> values = Stream.of(detail.split(", "))
+                .map(part -> part.split("=", 2))
+                .filter(parts -> parts.length == 2)
+                .collect(Collectors.toMap(parts -> parts[0], parts -> parts[1], (left, right) -> left));
+
+        String stockName = values.getOrDefault("stockName", "-");
+        String stockCode = values.getOrDefault("stockCode", "-");
+        String quantity = values.getOrDefault("quantity", "-");
+        String price = values.getOrDefault("price", "-");
+        String totalAmount = values.getOrDefault("totalAmount", "-");
+        String side = "ORDER_BUY".equals(action) ? "매수" : "매도";
+
+        return String.format(
+                "%s(%s) %s주 %s 체결 / 체결가 %s원 / 총액 %s원",
+                stockName,
+                stockCode,
+                quantity,
+                side,
+                price,
+                totalAmount
+        );
+    }
+
+    private String toNicknameUpdateDetailLabel(String detail) {
+        Map<String, String> values = Stream.of(detail.split(", "))
+                .map(part -> part.split("=", 2))
+                .filter(parts -> parts.length == 2)
+                .collect(Collectors.toMap(parts -> parts[0], parts -> parts[1], (left, right) -> left));
+
+        String before = values.getOrDefault("before", "-");
+        String after = values.getOrDefault("after", "-");
+        return String.format("닉네임 변경: %s -> %s", before, after);
+    }
+
+    private String toAccountResetDetailLabel(String detail) {
+        Map<String, String> values = Stream.of(detail.split(", "))
+                .map(part -> part.split("=", 2))
+                .filter(parts -> parts.length == 2)
+                .collect(Collectors.toMap(parts -> parts[0], parts -> parts[1], (left, right) -> left));
+
+        String accountName = values.getOrDefault("accountName", "기본 계좌");
+        String cashBalance = values.getOrDefault("cashBalance", "5000000");
+        return String.format("%s 초기화 / 예수금 %s원으로 재설정", accountName, cashBalance);
     }
 
     private record ParsedActivity(

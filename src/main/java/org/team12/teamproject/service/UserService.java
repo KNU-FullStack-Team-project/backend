@@ -468,9 +468,21 @@ public class UserService {
             throw new RuntimeException("이미 사용 중인 닉네임입니다.");
         }
 
+        String previousNickname = user.getNickname();
         user.setNickname(nickname);
         user.setUpdatedAt(LocalDateTime.now());
         userRepository.save(user);
+
+        if (!nickname.equals(previousNickname)) {
+            userActivityAuditLogger.log(
+                    user.getId(),
+                    user.getEmail(),
+                    "PROFILE_NICKNAME_UPDATE",
+                    "USER",
+                    String.valueOf(user.getId()),
+                    "before=" + previousNickname + ", after=" + nickname
+            );
+        }
 
         return toUserProfile(user);
     }
