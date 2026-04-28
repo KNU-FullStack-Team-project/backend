@@ -7,6 +7,7 @@ import org.team12.teamproject.dto.PageResponseDto;
 import org.team12.teamproject.dto.StockResponseDto;
 import org.team12.teamproject.service.StockService;
 import lombok.RequiredArgsConstructor;
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/stocks")
@@ -26,9 +27,10 @@ public class StockController {
     @GetMapping
     public ResponseEntity<PageResponseDto<StockResponseDto>> getStockList(
             @RequestParam(name = "page", defaultValue = "1") int page,
-            @RequestParam(name = "size", defaultValue = "20") int size
+            @RequestParam(name = "size", defaultValue = "20") int size,
+            @RequestParam(name = "industry", required = false) String industry
     ) {
-        PageResponseDto<StockResponseDto> response = stockService.getStockList(page, size);
+        PageResponseDto<StockResponseDto> response = stockService.getStockList(page, size, industry);
         return ResponseEntity.ok(response);
     }
 
@@ -61,6 +63,11 @@ public class StockController {
     @GetMapping("/search")
     public ResponseEntity<?> searchStocks(@RequestParam(name = "keyword") String keyword) {
         return ResponseEntity.ok(stockService.searchStocks(keyword));
+    }
+
+    @GetMapping("/industries")
+    public ResponseEntity<List<String>> getAllIndustries() {
+        return ResponseEntity.ok(stockService.getAllIndustries());
     }
 
     // =========================================================

@@ -170,14 +170,14 @@ public class StockService {
     /**
      * 주식 목록 조회 (페이징)
      */
-    public PageResponseDto<StockResponseDto> getStockList(int page, int size) {
+    public PageResponseDto<StockResponseDto> getStockList(int page, int size, String industry) {
         // 프론트엔드에서 0 또는 1로 보낼 수 있으므로 안전하게 처리 (0-indexed 기준 지원)
         int effectivePage = (page <= 0) ? 1 : page;
         int lower = (effectivePage - 1) * size;
         int upper = effectivePage * size;
 
-        List<Stock> stockList = stockRepository.findStocksNative(lower, upper);
-        long totalElements = stockRepository.countValidStocks();
+        List<Stock> stockList = stockRepository.findStocksNative(lower, upper, industry);
+        long totalElements = stockRepository.countValidStocks(industry);
         int totalPages = (int) Math.ceil((double) totalElements / size);
 
         List<StockResponseDto> content = new ArrayList<>();
@@ -195,7 +195,8 @@ public class StockService {
 
                 StockResponseDto.StockResponseDtoBuilder builder = StockResponseDto.builder()
                         .symbol(stock.getStockCode())
-                        .name(stock.getStockName());
+                        .name(stock.getStockName())
+                        .industry(stock.getIndustry());
 
                 if (cachedData != null) {
                     String[] parts = cachedData.split(":");
@@ -240,6 +241,7 @@ public class StockService {
                     .map(s -> StockResponseDto.builder()
                             .symbol(s.getStockCode())
                             .name(s.getStockName())
+                            .industry(s.getIndustry())
                             .currentPrice("0")
                             .changeAmount("0")
                             .changeRate("0")
@@ -290,7 +292,8 @@ public class StockService {
                     
                     StockResponseDto.StockResponseDtoBuilder builder = StockResponseDto.builder()
                             .symbol(s.getStockCode())
-                            .name(s.getStockName());
+                            .name(s.getStockName())
+                            .industry(s.getIndustry());
 
                     if (cachedData != null) {
                         String[] parts = cachedData.split(":");
@@ -424,6 +427,7 @@ public class StockService {
             return StockResponseDto.builder()
                     .symbol(stockCode)
                     .name(s.getStockName())
+                    .industry(s.getIndustry())
                     .currentPrice(s.getCurrentPrice().toString())
                     .changeAmount(s.getChangeAmount() != null ? s.getChangeAmount().toString() : "0")
                     .changeRate(s.getChangeRate() != null ? s.getChangeRate().toString() : "0")
@@ -874,6 +878,9 @@ public class StockService {
                 log.warn("Redis에 토큰 저장 실패: {}", e.getMessage());
             }
         }
+    }
+    public List<String> getAllIndustries() {
+        return stockRepository.findAllIndustries();
     }
 
     @org.springframework.transaction.annotation.Transactional

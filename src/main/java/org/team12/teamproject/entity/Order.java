@@ -24,22 +24,22 @@ public class Order {
     @JoinColumn(name = "stock_id", nullable = false)
     private Stock stock;
 
-    @Column(name = "order_side", length = 10, nullable = false)
+    @Column(name = "order_type", length = 10, nullable = false)
     private String orderSide; // BUY or SELL
 
-    @Column(name = "order_type", length = 10, nullable = false)
+    @Column(name = "price_type", length = 10, nullable = false)
     private String orderType; // MARKET or LIMIT
 
     @Column(name = "quantity", nullable = false)
     private Long quantity;
 
-    @Column(name = "price", precision = 18, scale = 2)
+    @Column(name = "order_price", precision = 18, scale = 2)
     private BigDecimal price; // LIMIT일 경우 지정단가, MARKET일 경우 NULL 또는 체결가
 
     @Column(name = "remaining_quantity", nullable = false)
     private Long remainingQuantity;
 
-    @Column(name = "order_status", length = 20, nullable = false)
+    @Column(name = "status", length = 20, nullable = false)
     private String orderStatus = "PENDING"; // PENDING, PARTIAL, COMPLETED, CANCELED
 
     @Column(name = "queued_at")

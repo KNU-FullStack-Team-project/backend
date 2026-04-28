@@ -114,6 +114,14 @@ public class KisMasterSyncService {
                         continue;
                     }
 
+                    // 업종코드 파싱 (KOSPI/KOSDAQ 위치 다름)
+                    String industry = "";
+                    if ("KOSPI".equals(marketType) && bytes.length > 106) {
+                        industry = new String(bytes, 103, 3, "MS949").trim();
+                    } else if ("KOSDAQ".equals(marketType) && bytes.length > 111) {
+                        industry = new String(bytes, 107, 4, "MS949").trim();
+                    }
+
                     // DB 체크
                     Stock existing = existingStocks.get(shortCode);
                     if (existing == null) {
@@ -121,6 +129,7 @@ public class KisMasterSyncService {
                                 .stockCode(shortCode)
                                 .stockName(stockName)
                                 .marketType(marketType)
+                                .industry(industry) // 추출된 코드 우선 저장
                                 .isActive(true)
                                 .createdAt(LocalDateTime.now())
                                 .build();
