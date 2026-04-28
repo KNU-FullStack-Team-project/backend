@@ -34,6 +34,7 @@ public class AccountService {
     private final FavoriteStockService favoriteStockService;
 
     private final UserRepository userRepository;
+    private final UserActivityAuditLogger userActivityAuditLogger;
 
     private static final NumberFormat CURRENCY_FORMAT = NumberFormat.getCurrencyInstance(Locale.KOREA);
 
@@ -162,7 +163,7 @@ public class AccountService {
         return accounts.stream()
                 .map(account -> MyAccountBalanceDto.builder()
                         .accountId(account.getId())
-                        .accountName(account.getAccountName())
+                        .accountName(toDisplayAccountName(account))
                         .accountType(account.getAccountType())
                         .cashBalance(CURRENCY_FORMAT.format(account.getCashBalance()))
                         .build())
@@ -182,11 +183,28 @@ public class AccountService {
         account.resetCashBalance(new BigDecimal("5000000"));
         Account savedAccount = accountRepository.save(account);
 
+        userActivityAuditLogger.log(
+                savedAccount.getUser().getId(),
+                savedAccount.getUser().getEmail(),
+                "ACCOUNT_RESET",
+                "ACCOUNT",
+                String.valueOf(savedAccount.getId()),
+                "accountName=" + toDisplayAccountName(savedAccount) + ", cashBalance=5000000"
+        );
+
         return MyAccountBalanceDto.builder()
                 .accountId(savedAccount.getId())
-                .accountName(savedAccount.getAccountName())
+                .accountName(toDisplayAccountName(savedAccount))
                 .accountType(savedAccount.getAccountType())
                 .cashBalance(CURRENCY_FORMAT.format(savedAccount.getCashBalance()))
                 .build();
+    }
+
+    private String toDisplayAccountName(Account account) {
+        if ("MAIN".equals(account.getAccountType())) {
+            return account.getUser().getNickname() + "의 기본 계좌";
+        }
+
+        return account.getAccountName();
     }
 }
