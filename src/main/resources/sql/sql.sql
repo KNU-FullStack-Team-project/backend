@@ -45,6 +45,8 @@ CREATE TABLE users (
 	email_verified	NUMBER		NOT NULL,
 	last_login_at	DATE		NULL,
 	suspended_at	DATE		NULL,
+	suspended_until	DATE		NULL,
+	suspension_reason	VARCHAR2(500)		NULL,
 	withdrawn_at	DATE		NULL,
 	created_at	DATE		NOT NULL,
 	updated_at	DATE		NOT NULL,

@@ -48,6 +48,12 @@ public class User {
     @Column(name = "suspended_at")
     private LocalDateTime suspendedAt;
 
+    @Column(name = "suspended_until")
+    private LocalDateTime suspendedUntil;
+
+    @Column(name = "suspension_reason", length = 500)
+    private String suspensionReason;
+
     @Column(name = "withdrawn_at")
     private LocalDateTime withdrawnAt;
 
