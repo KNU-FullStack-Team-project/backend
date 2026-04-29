@@ -40,7 +40,7 @@ public class StockDiagnosisDto {
     @Builder
     public static class DiagnosisDetail {
         private String indicator;
-        private String description;
+        private String analysis;
         private double score;
     }
 }

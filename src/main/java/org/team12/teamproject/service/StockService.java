@@ -585,7 +585,7 @@ public class StockService {
                     startDate = now.minusYears(5).format(DateTimeFormatter.ofPattern("yyyyMMdd")); // 월봉 5년
                 } else if ("D".equals(period)) {
                     periodCode = "D";
-                    startDate = now.minusMonths(6).minusDays(50).format(DateTimeFormatter.ofPattern("yyyyMMdd")); // 일봉 6개월 + 버퍼
+                    startDate = now.minusDays(99).format(DateTimeFormatter.ofPattern("yyyyMMdd")); // KIS API 최대 100일 제한
                 } 
                 // 기존 숫자형 코드들은 해당 기간의 '일봉'을 유지 (하위 호환성)
                 else if ("1W".equals(period)) {
