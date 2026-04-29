@@ -26,6 +26,7 @@ public class AccountDashboardDto {
     @Builder
     public static class HoldingItemDto {
         private String stockName;
+        private String stockCode;
         private Long quantity;
         private String averageBuyPrice;
         private String currentPrice;

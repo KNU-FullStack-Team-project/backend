@@ -195,6 +195,8 @@ public class UserActivityService {
             case "INQUIRY_REPLY" -> "문의 답변";
             case "INQUIRY_READ" -> "문의 확인";
             case "REPORT_CREATE" -> "신고 접수";
+            case "SUSPENSION_SET" -> "계정 정지";
+            case "SUSPENSION_RELEASE" -> "정지 해제";
             default -> action;
         };
     }
@@ -261,6 +263,14 @@ public class UserActivityService {
             return "사유 " + detail.substring("reason=".length());
         }
 
+        if ("SUSPENSION_SET".equals(action)) {
+            return toSuspensionSetDetailLabel(detail);
+        }
+
+        if ("SUSPENSION_RELEASE".equals(action)) {
+            return toSuspensionReleaseDetailLabel(detail);
+        }
+
         if ("LOGIN".equals(action) && detail.startsWith("role=")) {
             return user.getNickname() + " 계정 로그인";
         }
@@ -320,6 +330,35 @@ public class UserActivityService {
         String accountName = values.getOrDefault("accountName", "기본 계좌");
         String cashBalance = values.getOrDefault("cashBalance", "5000000");
         return String.format("%s 초기화 / 예수금 %s원으로 재설정", accountName, cashBalance);
+    }
+
+    private String toSuspensionSetDetailLabel(String detail) {
+        Map<String, String> values = Stream.of(detail.split("; "))
+                .map(part -> part.split("=", 2))
+                .filter(parts -> parts.length == 2)
+                .collect(Collectors.toMap(parts -> parts[0], parts -> parts[1], (left, right) -> left));
+
+        String hours = values.getOrDefault("hours", "-");
+        String until = values.getOrDefault("until", "-");
+        String reason = values.getOrDefault("reason", "-");
+        String period = "PERMANENT".equals(until)
+                ? "영구 정지"
+                : hours + "시간 정지 / 해제 예정 " + until;
+        return period + " / 사유 " + reason;
+    }
+
+    private String toSuspensionReleaseDetailLabel(String detail) {
+        Map<String, String> values = Stream.of(detail.split("; "))
+                .map(part -> part.split("=", 2))
+                .filter(parts -> parts.length == 2)
+                .collect(Collectors.toMap(parts -> parts[0], parts -> parts[1], (left, right) -> left));
+
+        String type = values.getOrDefault("type", "-");
+        if ("AUTO".equals(type)) {
+            return "정지 기간 만료로 자동 해제";
+        }
+        String nextStatus = values.getOrDefault("nextStatus", "ACTIVE");
+        return "관리자 수동 해제 / 변경 상태 " + nextStatus;
     }
 
     private record ParsedActivity(

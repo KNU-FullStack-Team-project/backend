@@ -117,6 +117,7 @@ public class CommunityService {
                         .commentCount(post.getCommentCount())
                         .viewCount(post.getViewCount())
                         .likeCount(post.getLikeCount())
+                        .dislikeCount(post.getDislikeCount())
                         .isNotice(post.getIsNotice())
                         .createdAt(post.getCreatedAt())
                         .build())
@@ -142,6 +143,7 @@ public class CommunityService {
                         .commentCount(post.getCommentCount())
                         .viewCount(post.getViewCount())
                         .likeCount(post.getLikeCount())
+                        .dislikeCount(post.getDislikeCount())
                         .isNotice(post.getIsNotice())
                         .createdAt(post.getCreatedAt())
                         .build())
@@ -170,6 +172,7 @@ public class CommunityService {
                 .content(request.getContent().trim())
                 .viewCount(0)
                 .likeCount(0)
+                .dislikeCount(0)
                 .commentCount(0)
                 .reportCount(0)
                 .status("NORMAL")
@@ -218,6 +221,7 @@ public class CommunityService {
                 .content(request.getContent().trim())
                 .viewCount(0)
                 .likeCount(0)
+                .dislikeCount(0)
                 .commentCount(0)
                 .reportCount(0)
                 .status("NORMAL")
@@ -277,11 +281,21 @@ public class CommunityService {
                 .toList();
 
         boolean likedByCurrentUser = false;
+        boolean votedByCurrentUser = false;
+        String myVoteType = null;
 
         if (email != null) {
             User loginUser = userRepository.findByEmail(email).orElse(null);
             if (loginUser != null) {
-                likedByCurrentUser = postLikeRepository.existsByPostIdAndUserId(postId, loginUser.getId());
+                PostLike myVote = postLikeRepository
+                        .findByPostIdAndUserId(postId, loginUser.getId())
+                        .orElse(null);
+
+                if (myVote != null) {
+                    votedByCurrentUser = true;
+                    myVoteType = myVote.getVoteType();
+                    likedByCurrentUser = PostLike.VOTE_TYPE_LIKE.equals(myVote.getVoteType());
+                }
             }
         }
 
@@ -297,6 +311,7 @@ public class CommunityService {
                 .content(post.getContent())
                 .commentCount(post.getCommentCount())
                 .likeCount(post.getLikeCount())
+                        .dislikeCount(post.getDislikeCount())
                 .viewCount(post.getViewCount())
                 .isNotice(post.getIsNotice())
                 .createdAt(post.getCreatedAt())
@@ -325,14 +340,15 @@ public class CommunityService {
             throw new IllegalArgumentException("본인 글은 추천할 수 없습니다.");
         }
 
-        boolean alreadyLiked = postLikeRepository.existsByPostIdAndUserId(postId, user.getId());
-        if (alreadyLiked) {
-            throw new IllegalArgumentException("이미 추천한 게시글입니다.");
+        boolean alreadyVoted = postLikeRepository.existsByPostIdAndUserId(postId, user.getId());
+        if (alreadyVoted) {
+            throw new IllegalArgumentException("이미 추천 또는 비추천한 게시글입니다.");
         }
 
         PostLike postLike = PostLike.builder()
                 .post(post)
                 .user(user)
+                .voteType(PostLike.VOTE_TYPE_LIKE)
                 .createdAt(LocalDateTime.now())
                 .build();
 
@@ -343,6 +359,43 @@ public class CommunityService {
                 user.getId(),
                 user.getEmail(),
                 "POST_LIKE",
+                "POST",
+                String.valueOf(post.getId()),
+                abbreviateForLog(post.getTitle())
+        );
+    }
+
+    @Transactional
+    public void dislikePost(Long postId, String email) {
+        Post post = postRepository.findByIdAndStatus(postId, "NORMAL")
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 게시글입니다."));
+
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 사용자입니다."));
+
+        if (post.getUser().getId().equals(user.getId())) {
+            throw new IllegalArgumentException("본인 글은 비추천할 수 없습니다.");
+        }
+
+        boolean alreadyVoted = postLikeRepository.existsByPostIdAndUserId(postId, user.getId());
+        if (alreadyVoted) {
+            throw new IllegalArgumentException("이미 추천 또는 비추천한 게시글입니다.");
+        }
+
+        PostLike postLike = PostLike.builder()
+                .post(post)
+                .user(user)
+                .voteType(PostLike.VOTE_TYPE_DISLIKE)
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        postLikeRepository.save(postLike);
+        post.increaseDislikeCount();
+
+        userActivityAuditLogger.log(
+                user.getId(),
+                user.getEmail(),
+                "POST_DISLIKE",
                 "POST",
                 String.valueOf(post.getId()),
                 abbreviateForLog(post.getTitle())
@@ -596,6 +649,7 @@ public class CommunityService {
                         .commentCount(post.getCommentCount())
                         .viewCount(post.getViewCount())
                         .likeCount(post.getLikeCount())
+                        .dislikeCount(post.getDislikeCount())
                         .isNotice(post.getIsNotice())
                         .createdAt(post.getCreatedAt())
                         .build())
@@ -637,6 +691,7 @@ public class CommunityService {
                         .commentCount(post.getCommentCount())
                         .viewCount(post.getViewCount())
                         .likeCount(post.getLikeCount())
+                        .dislikeCount(post.getDislikeCount())
                         .isNotice(post.getIsNotice())
                         .createdAt(post.getCreatedAt())
                         .build())
@@ -758,7 +813,7 @@ public class CommunityService {
                     deleteEx.printStackTrace();
                 }
 
-                String newUrl = "/uploads/" + subDir.replace("\\", "/") + "/" + newName;
+                String newUrl = "/api/uploads/" + subDir.replace("\\", "/") + "/" + newName;
                 file.updateFileInfo(newName, newUrl, post);
 
                 System.out.println("=== finalizeTempAttachments success ===");
@@ -779,7 +834,7 @@ public class CommunityService {
     }
 
     private String extractSubDir(String fileUrl) {
-        String path = fileUrl.replace("/uploads/", "");
+        String path = fileUrl.replace("/api/uploads/", "").replace("/uploads/", "");
         int lastSlashIndex = path.lastIndexOf("/");
         if (lastSlashIndex < 0) {
             throw new IllegalArgumentException("잘못된 파일 경로입니다.");
@@ -846,6 +901,7 @@ public class CommunityService {
                         .commentCount(post.getCommentCount())
                         .viewCount(post.getViewCount())
                         .likeCount(post.getLikeCount())
+                        .dislikeCount(post.getDislikeCount())
                         .isNotice(post.getIsNotice())
                         .createdAt(post.getCreatedAt())
                         .build())
@@ -868,6 +924,7 @@ public class CommunityService {
                         .commentCount(post.getCommentCount())
                         .viewCount(post.getViewCount())
                         .likeCount(post.getLikeCount())
+                        .dislikeCount(post.getDislikeCount())
                         .isNotice(post.getIsNotice())
                         .createdAt(post.getCreatedAt())
                         .build())
@@ -894,6 +951,7 @@ public class CommunityService {
                 .content(request.getContent().trim())
                 .viewCount(0)
                 .likeCount(0)
+                .dislikeCount(0)
                 .commentCount(0)
                 .reportCount(0)
                 .status("NORMAL")

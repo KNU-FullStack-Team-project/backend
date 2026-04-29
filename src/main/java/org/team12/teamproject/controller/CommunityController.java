@@ -140,6 +140,24 @@ public class CommunityController {
         }
     }
 
+    @PostMapping("/posts/{postId}/dislike")
+    public ResponseEntity<?> dislikePost(
+        @PathVariable Long postId,
+        Authentication authentication
+    ) {
+        try {
+            if (authentication == null || authentication.getName() == null) {
+                return ResponseEntity.status(401).body("로그인이 필요합니다.");
+            }
+
+            String email = authentication.getName();
+            communityService.dislikePost(postId, email);
+            return ResponseEntity.ok("비추천이 반영되었습니다.");
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
     @PostMapping("/posts/{postId}/report")
     public ResponseEntity<?> reportPost(
             @PathVariable Long postId,

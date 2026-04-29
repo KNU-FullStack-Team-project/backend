@@ -113,6 +113,7 @@ public class AccountService {
 
                     return AccountDashboardDto.HoldingItemDto.builder()
                             .stockName(h.getStock().getStockName())
+                            .stockCode(h.getStock().getStockCode())
                             .quantity(h.getQuantity())
                             .averageBuyPrice(CURRENCY_FORMAT.format(h.getAverageBuyPrice()))
                             .currentPrice(currentPriceFormatted)

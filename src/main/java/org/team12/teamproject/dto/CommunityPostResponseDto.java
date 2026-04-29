@@ -18,6 +18,7 @@ public class CommunityPostResponseDto {
     private String title;
     private Integer commentCount;
     private Integer likeCount;
+    private Integer dislikeCount;
     private Integer viewCount;
     private LocalDateTime createdAt;
     private Boolean isNotice;

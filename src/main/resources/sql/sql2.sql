@@ -21,6 +21,8 @@ CREATE TABLE users (
     email_verified NUMBER(1) DEFAULT 0 NOT NULL, -- Boolean 대용
     last_login_at TIMESTAMP,
     suspended_at TIMESTAMP,
+    suspended_until TIMESTAMP,
+    suspension_reason VARCHAR2(500),
     withdrawn_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -243,15 +245,14 @@ CREATE TABLE comments (
     CONSTRAINT fk_comment_parent FOREIGN KEY (parent_comment_id) REFERENCES comments (comment_id)
 );
 
--- 18. 관심종목 (기존 favorite_stocks 스키마 반영)
+-- 18. 관심종목
 CREATE TABLE favorite_stocks (
     id NUMBER(19) PRIMARY KEY,
     user_id NUMBER(19) NOT NULL,
-    stock_id NUMBER(19) NOT NULL, -- stock_symbol 대신 ID 권장
+    stock_symbol VARCHAR2(20) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_fav_user FOREIGN KEY (user_id) REFERENCES users (user_id),
-    CONSTRAINT fk_fav_stock FOREIGN KEY (stock_id) REFERENCES stock (stock_id),
-    CONSTRAINT uk_user_stock UNIQUE (user_id, stock_id)
+    CONSTRAINT uk_user_stock UNIQUE (user_id, stock_symbol)
 );
 
 -- 19. 목표가 알림

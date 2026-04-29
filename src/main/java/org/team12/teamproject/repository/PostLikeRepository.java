@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.team12.teamproject.entity.PostLike;
 
 import java.util.List;
+import java.util.Optional;
 
 public interface PostLikeRepository extends JpaRepository<PostLike, Long> {
 
@@ -15,6 +16,8 @@ public interface PostLikeRepository extends JpaRepository<PostLike, Long> {
               and pl.user.id = :userId
             """)
     boolean existsByPostIdAndUserId(Long postId, Long userId);
+
+    Optional<PostLike> findByPostIdAndUserId(Long postId, Long userId);
 
     List<PostLike> findByUser_IdOrderByCreatedAtDesc(Long userId);
 }
