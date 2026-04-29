@@ -249,6 +249,7 @@ CREATE TABLE favorite_stocks (
     user_id NUMBER(19) NOT NULL,
     stock_id NUMBER(19) NOT NULL, -- stock_symbol 대신 ID 권장
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    alert_level VARCHAR2(20) DEFAULT 'STRONG_BUY',
     CONSTRAINT fk_fav_user FOREIGN KEY (user_id) REFERENCES users (user_id),
     CONSTRAINT fk_fav_stock FOREIGN KEY (stock_id) REFERENCES stock (stock_id),
     CONSTRAINT uk_user_stock UNIQUE (user_id, stock_id)

@@ -585,23 +585,23 @@ public class StockService {
                     startDate = now.minusYears(5).format(DateTimeFormatter.ofPattern("yyyyMMdd")); // 월봉 5년
                 } else if ("D".equals(period)) {
                     periodCode = "D";
-                    startDate = now.minusMonths(6).format(DateTimeFormatter.ofPattern("yyyyMMdd")); // 일봉 6개월
+                    startDate = now.minusMonths(6).minusDays(50).format(DateTimeFormatter.ofPattern("yyyyMMdd")); // 일봉 6개월 + 버퍼
                 } 
                 // 기존 숫자형 코드들은 해당 기간의 '일봉'을 유지 (하위 호환성)
                 else if ("1W".equals(period)) {
-                    startDate = now.minusDays(7).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                    startDate = now.minusDays(7 + 50).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else if ("1M".equals(period)) {
-                    startDate = now.minusMonths(1).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                    startDate = now.minusMonths(1).minusDays(50).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else if ("3M".equals(period)) {
-                    startDate = now.minusMonths(3).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                    startDate = now.minusMonths(3).minusDays(50).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else if ("6M".equals(period)) {
                     periodCode = "M";
-                    startDate = now.minusMonths(6).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                    startDate = now.minusMonths(6).minusDays(50).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else if ("1Y".equals(period)) {
                     periodCode = "D"; 
-                    startDate = now.minusYears(1).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                    startDate = now.minusYears(1).minusDays(50).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else {
-                    startDate = now.minusDays(30).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                    startDate = now.minusDays(30 + 50).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 }
 
                 String url = apiUrl + "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
