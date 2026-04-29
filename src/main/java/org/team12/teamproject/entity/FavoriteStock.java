@@ -31,6 +31,12 @@ public class FavoriteStock {
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
+    @Column(name = "alert_level", length = 20)
+    private String buyAlertLevel; // STRONG_BUY, BUY, NONE
+
+    @Column(name = "sell_alert_level", length = 20)
+    private String sellAlertLevel; // STRONG_SELL, SELL, NONE
+
     @PrePersist
     protected void onCreate() {
         this.createdAt = LocalDateTime.now();
