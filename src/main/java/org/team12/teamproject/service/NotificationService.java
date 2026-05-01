@@ -18,7 +18,6 @@ public class NotificationService {
 
     private final NotificationRepository notificationRepository;
     private final SseService sseService;
-    private final UserActivityAuditLogger userActivityAuditLogger;
 
     @Transactional
     public void sendNotification(User user, String title, String message, NotificationType type) {
@@ -34,14 +33,6 @@ public class NotificationService {
 
         // 2. 실시간 SSE 전송
         sseService.sendNotification(user.getId(), notification);
-
-        userActivityAuditLogger.log(
-                user.getId(),
-                user.getEmail(),
-                "NOTIFICATION_CREATE",
-                "NOTIFICATION",
-                String.valueOf(notification.getId()),
-                "type=" + type + ", title=" + title);
 
         log.info("알림 생성 및 전송 완료: UserId={}, Type={}, Title={}, Message={}",
                 user.getId(), type, title, message);
@@ -60,30 +51,12 @@ public class NotificationService {
     @Transactional
     public void markAsRead(Long notificationId) {
         notificationRepository.findById(notificationId)
-                .ifPresent(notification -> {
-                    notification.markAsRead();
-                    userActivityAuditLogger.log(
-                            notification.getUser().getId(),
-                            notification.getUser().getEmail(),
-                            "NOTIFICATION_READ",
-                            "NOTIFICATION",
-                            String.valueOf(notification.getId()),
-                            "mark_as_read");
-                });
+                .ifPresent(Notification::markAsRead);
     }
 
     @Transactional
     public void markAllAsRead(Long userId) {
         notificationRepository.findByUserIdAndIsRead(userId, 0)
-                .forEach(notification -> {
-                    notification.markAsRead();
-                    userActivityAuditLogger.log(
-                            notification.getUser().getId(),
-                            notification.getUser().getEmail(),
-                            "NOTIFICATION_READ",
-                            "NOTIFICATION",
-                            String.valueOf(notification.getId()),
-                            "mark_all_as_read");
-                });
+                .forEach(Notification::markAsRead);
     }
 }

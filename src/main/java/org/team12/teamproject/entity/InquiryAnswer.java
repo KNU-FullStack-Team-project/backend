@@ -28,7 +28,8 @@ public class InquiryAnswer {
     @JoinColumn(name = "admin_user_id", nullable = false)
     private User admin;
 
-    @Column(name = "content", nullable = false, length = 100)
+    @Lob
+    @Column(name = "content", nullable = false)
     private String content;
 
     @Column(name = "created_at", nullable = false, updatable = false)

@@ -311,8 +311,10 @@ public class CommunityService {
                 .content(post.getContent())
                 .commentCount(post.getCommentCount())
                 .likeCount(post.getLikeCount())
-                        .dislikeCount(post.getDislikeCount())
+                .dislikeCount(post.getDislikeCount())
                 .viewCount(post.getViewCount())
+                .status(post.getStatus())
+                .deletedAt(post.getDeletedAt())
                 .isNotice(post.getIsNotice())
                 .createdAt(post.getCreatedAt())
                 .likedByCurrentUser(likedByCurrentUser)
@@ -813,7 +815,7 @@ public class CommunityService {
                     deleteEx.printStackTrace();
                 }
 
-                String newUrl = "/uploads/" + subDir.replace("\\", "/") + "/" + newName;
+                String newUrl = "/api/uploads/" + subDir.replace("\\", "/") + "/" + newName;
                 file.updateFileInfo(newName, newUrl, post);
 
                 System.out.println("=== finalizeTempAttachments success ===");
@@ -834,7 +836,7 @@ public class CommunityService {
     }
 
     private String extractSubDir(String fileUrl) {
-        String path = fileUrl.replace("/uploads/", "");
+        String path = fileUrl.replace("/api/uploads/", "").replace("/uploads/", "");
         int lastSlashIndex = path.lastIndexOf("/");
         if (lastSlashIndex < 0) {
             throw new IllegalArgumentException("잘못된 파일 경로입니다.");

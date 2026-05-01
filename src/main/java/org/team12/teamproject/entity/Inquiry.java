@@ -30,7 +30,8 @@ public class Inquiry {
     @Column(name = "title", nullable = false, length = 200)
     private String title;
 
-    @Column(name = "content", nullable = false, length = 2000)
+    @Lob
+    @Column(name = "content", nullable = false)
     private String content;
 
     @Builder.Default

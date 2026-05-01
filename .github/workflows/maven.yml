@@ -11,6 +11,7 @@ name: backend CI
 on:
   push:
     branches: [ "master" ]
+  workflow_dispatch:
     
 jobs:
   build:
@@ -36,24 +37,6 @@ jobs:
         echo "recaptcha.secret=${{ secrets.RECAPTCHA_SECRET }}" >> src/main/resources/secrets.properties
         echo "google.oauth.client-id=${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}" >> src/main/resources/secrets.properties
         
-    # - name: Verify secrets.properties creation
-    #   run: |
-    #     echo ">>> Project Root Directory:"
-    #     ls -F
-    #     echo ">>> Resources Directory Structure:"
-    #     ls -R src/main/resources
-    #     echo ">>> Checking if secrets.properties exists:"
-    #     if [ -f src/main/resources/secrets.properties ]; then
-    #       echo "SUCCESS: secrets.properties found."
-    #     else
-    #       echo "ERROR: secrets.properties NOT FOUND!"
-    #       exit 1
-    #     fi
-        
-    #     echo ">>> Current Directory:"
-    #     pwd
-    #     echo ">>> Resources Directory Listing:"
-    #     ls -R src/main/resources
     - name: Build with Maven
       run: |
         mvn -B package -DskipTests --file pom.xml
@@ -67,7 +50,7 @@ jobs:
         key: ${{ secrets.EC2_KEY }}
         # 빌드된 JAR 파일과 Dockerfile을 전송합니다.
         source: "target/*.jar,Dockerfile"
-        target: "~/teamproject"
+        target: "~/teamproject/backend"
     - name: Deploy on EC2
       uses: appleboy/ssh-action@master
       with:
@@ -76,8 +59,7 @@ jobs:
         key: ${{ secrets.EC2_KEY }}
         script: |
           cd ~/teamproject
-          # 기존 컨테이너가 있다면 삭제
-          sudo docker rm -f my-backend || true
-          # 전송받은 파일로 이미지 빌드 및 실행
-          sudo docker build -t team-backend .
-          sudo docker run -d -p 8081:8081 --name my-backend team-backend
+          # 저장용 폴더들 생성
+          mkdir -p backend/uploads backend/profile
+          # 컴포즈를 통해 백엔드 컨테이너만 빌드 및 재시작
+          sudo docker compose up --build -d backend

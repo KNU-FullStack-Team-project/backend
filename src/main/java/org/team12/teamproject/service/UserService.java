@@ -2,10 +2,12 @@ package org.team12.teamproject.service;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import java.util.concurrent.TimeUnit;
 import org.team12.teamproject.dto.AdminUpdateUserRequestDto;
 import org.team12.teamproject.dto.ChangeNicknameRequestDto;
 import org.team12.teamproject.dto.ChangePasswordRequestDto;
@@ -34,7 +36,9 @@ import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -46,6 +50,8 @@ public class UserService {
 
     private static final int CAPTCHA_THRESHOLD = 5;
     private static final String SOCIAL_GOOGLE_PASSWORD_MARKER = "{social}google";
+    private static final DateTimeFormatter SUSPENSION_TIME_FORMAT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final UserRepository userRepository;
     private final AccountRepository accountRepository;
@@ -53,11 +59,14 @@ public class UserService {
     private final PasswordEncoder passwordEncoder;
     private final JdbcTemplate jdbcTemplate;
     private final JwtUtil jwtUtil;
+    private final StringRedisTemplate redisTemplate;
     private final RecaptchaService recaptchaService;
     private final UserActivityAuditLogger userActivityAuditLogger;
     private final GoogleTokenVerifierService googleTokenVerifierService;
 
     private final Map<String, Integer> loginFailureCounts = new ConcurrentHashMap<>();
+    private static final String RT_KEY_PREFIX = "RT:";
+    private static final long REFRESH_TOKEN_VALIDITY_DAYS = 7;
 
     @Transactional
     public String signup(SignupRequestDto dto) {
@@ -164,6 +173,8 @@ public class UserService {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> buildLoginFailedException(normalizedEmail));
 
+        releaseExpiredSuspension(user);
+
         if (!matchesPassword(dto.getPassword(), user.getPasswordHash())) {
             throw buildLoginFailedException(normalizedEmail);
         }
@@ -173,7 +184,7 @@ public class UserService {
         }
 
         if ("SUSPENDED".equalsIgnoreCase(user.getStatus())) {
-            throw new LoginFailedException("정지된 계정입니다.", isCaptchaRequired(normalizedEmail));
+            throw new LoginFailedException(buildSuspensionMessage(user), isCaptchaRequired(normalizedEmail));
         }
 
         if (!isLoginAllowedStatus(user.getStatus())) {
@@ -186,7 +197,17 @@ public class UserService {
         user.setUpdatedAt(LocalDateTime.now());
         userRepository.save(user);
 
-        String token = jwtUtil.generateToken(user.getEmail(), user.getRole());
+        String accessToken = jwtUtil.generateAccessToken(user.getEmail(), user.getRole());
+        String refreshToken = jwtUtil.generateRefreshToken(user.getEmail());
+
+        // Refresh Token Redis 저장
+        redisTemplate.opsForValue().set(
+                RT_KEY_PREFIX + user.getEmail(),
+                refreshToken,
+                REFRESH_TOKEN_VALIDITY_DAYS,
+                TimeUnit.DAYS
+        );
+
         List<Account> accounts = accountRepository.findByUserId(user.getId());
         Long accountId = accounts.isEmpty() ? null : accounts.get(0).getId();
 
@@ -206,7 +227,8 @@ public class UserService {
                 normalizeProfileImageUrl(user.getProfileImageUrl()),
                 user.getRole(),
                 "로그인 성공",
-                token,
+                accessToken,
+                refreshToken,
                 accountId,
                 false,
                 isSocialPasswordMarker(user.getPasswordHash())
@@ -236,6 +258,8 @@ public class UserService {
             );
         }
 
+        releaseExpiredSuspension(user);
+
         if ("QUIT".equalsIgnoreCase(user.getStatus())) {
             return new SocialLoginResultDto(
                     true,
@@ -248,7 +272,7 @@ public class UserService {
         }
 
         if ("SUSPENDED".equalsIgnoreCase(user.getStatus())) {
-            throw new RuntimeException("정지된 계정은 로그인할 수 없습니다.");
+            throw new RuntimeException(buildSuspensionMessage(user));
         }
 
         if (!isLoginAllowedStatus(user.getStatus())) {
@@ -468,9 +492,21 @@ public class UserService {
             throw new RuntimeException("이미 사용 중인 닉네임입니다.");
         }
 
+        String previousNickname = user.getNickname();
         user.setNickname(nickname);
         user.setUpdatedAt(LocalDateTime.now());
         userRepository.save(user);
+
+        if (!nickname.equals(previousNickname)) {
+            userActivityAuditLogger.log(
+                    user.getId(),
+                    user.getEmail(),
+                    "PROFILE_NICKNAME_UPDATE",
+                    "USER",
+                    String.valueOf(user.getId()),
+                    "before=" + previousNickname + ", after=" + nickname
+            );
+        }
 
         return toUserProfile(user);
     }
@@ -511,15 +547,21 @@ public class UserService {
         return "비밀번호가 재설정되었습니다.";
     }
 
+    @Transactional
     public List<UserProfileResponseDto> getUserList() {
         return userRepository.findAll().stream()
+                .peek(this::releaseExpiredSuspension)
                 .map(this::toUserProfile)
                 .toList();
     }
 
+    @Transactional
     public UserProfileResponseDto updateAdminUser(Long userId, AdminUpdateUserRequestDto dto) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다."));
+
+        releaseExpiredSuspension(user);
+        String previousStatus = user.getStatus();
 
         if (!"USER".equals(dto.getRole()) && !"ADMIN".equals(dto.getRole())) {
             throw new RuntimeException("권한 값이 올바르지 않습니다.");
@@ -532,11 +574,12 @@ public class UserService {
         }
 
         user.setRole(dto.getRole());
-        user.setStatus(dto.getStatus());
-        user.setSuspendedAt("SUSPENDED".equals(dto.getStatus()) ? LocalDateTime.now() : null);
+        applyUserStatus(user, dto);
         user.setUpdatedAt(LocalDateTime.now());
 
-        return toUserProfile(userRepository.save(user));
+        User savedUser = userRepository.save(user);
+        logSuspensionChange(savedUser, previousStatus, dto);
+        return toUserProfile(savedUser);
     }
 
     public String withdraw(WithdrawUserRequestDto dto) {
@@ -712,10 +755,114 @@ public class UserService {
                 .socialLogin(isSocialPasswordMarker(user.getPasswordHash()))
                 .role(user.getRole())
                 .status(user.getStatus())
+                .suspendedUntil(user.getSuspendedUntil() != null ? user.getSuspendedUntil().toString() : null)
+                .suspensionReason(user.getSuspensionReason())
                 .createdAt(user.getCreatedAt() != null ? user.getCreatedAt().toString() : null)
                 .accountId(accountId)
                 .accountCount(accounts.size())
                 .build();
+    }
+
+    private void applyUserStatus(User user, AdminUpdateUserRequestDto dto) {
+        if (!"SUSPENDED".equals(dto.getStatus())) {
+            user.setStatus(dto.getStatus());
+            user.setSuspendedAt(null);
+            user.setSuspendedUntil(null);
+            user.setSuspensionReason(null);
+            return;
+        }
+
+        boolean newlySuspended = !"SUSPENDED".equalsIgnoreCase(user.getStatus());
+        Double suspensionHours = dto.getSuspensionHours();
+
+        if (newlySuspended && suspensionHours == null) {
+            throw new RuntimeException("정지 기간을 시간 단위로 입력해주세요.");
+        }
+
+        user.setStatus("SUSPENDED");
+
+        if (suspensionHours == null) {
+            return;
+        }
+
+        if (!suspensionHours.equals(-1.0) && suspensionHours <= 0) {
+            throw new RuntimeException("정지 기간은 -1 또는 0이 아닌 양수 시간으로 입력해주세요.");
+        }
+
+        String reason = dto.getSuspensionReason() != null ? dto.getSuspensionReason().trim() : "";
+        if (reason.isBlank()) {
+            throw new RuntimeException("정지 사유를 입력해주세요.");
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        user.setSuspendedAt(now);
+        user.setSuspendedUntil(suspensionHours.equals(-1.0)
+                ? null
+                : now.plus(Duration.ofSeconds(Math.max(1, Math.round(suspensionHours * 3600)))));
+        user.setSuspensionReason(reason);
+    }
+
+    private void releaseExpiredSuspension(User user) {
+        if (!"SUSPENDED".equalsIgnoreCase(user.getStatus())) {
+            return;
+        }
+        if (user.getSuspendedUntil() == null || user.getSuspendedUntil().isAfter(LocalDateTime.now())) {
+            return;
+        }
+
+        user.setStatus("ACTIVE");
+        user.setSuspendedAt(null);
+        user.setSuspendedUntil(null);
+        user.setSuspensionReason(null);
+        user.setUpdatedAt(LocalDateTime.now());
+        userActivityAuditLogger.log(
+                user.getId(),
+                user.getEmail(),
+                "SUSPENSION_RELEASE",
+                "USER",
+                String.valueOf(user.getId()),
+                "type=AUTO"
+        );
+    }
+
+    private String buildSuspensionMessage(User user) {
+        String reason = user.getSuspensionReason() != null && !user.getSuspensionReason().isBlank()
+                ? user.getSuspensionReason()
+                : "관리자에 의해 정지되었습니다.";
+        String releaseTime = user.getSuspendedUntil() != null
+                ? user.getSuspendedUntil().format(SUSPENSION_TIME_FORMAT)
+                : "영구 정지";
+        return "정지된 계정입니다. 사유: " + reason + " / 해제시간: " + releaseTime;
+    }
+
+    private void logSuspensionChange(User user, String previousStatus, AdminUpdateUserRequestDto dto) {
+        if ("SUSPENDED".equals(dto.getStatus())) {
+            String releaseTime = user.getSuspendedUntil() != null
+                    ? user.getSuspendedUntil().format(SUSPENSION_TIME_FORMAT)
+                    : "PERMANENT";
+            userActivityAuditLogger.log(
+                    user.getId(),
+                    user.getEmail(),
+                    "SUSPENSION_SET",
+                    "USER",
+                    String.valueOf(user.getId()),
+                    "hours=" + dto.getSuspensionHours()
+                            + "; until=" + releaseTime
+                            + "; reason=" + user.getSuspensionReason()
+            );
+            return;
+        }
+
+        if ("SUSPENDED".equalsIgnoreCase(previousStatus) && !"SUSPENDED".equals(dto.getStatus())) {
+            userActivityAuditLogger.log(
+                    user.getId(),
+                    user.getEmail(),
+                    "SUSPENSION_RELEASE",
+                    "USER",
+                    String.valueOf(user.getId()),
+                    "type=MANUAL; nextStatus=" + dto.getStatus()
+            );
+        }
     }
 
     private Path getProfileDirectory() {
@@ -739,14 +886,25 @@ public class UserService {
         }
     }
 
-    public String refreshToken(String email) {
+    public String refreshToken(String refreshToken) {
+        if (refreshToken == null || !jwtUtil.validateToken(refreshToken)) {
+            throw new RuntimeException("유효하지 않은 리프레시 토큰입니다.");
+        }
+        String email = jwtUtil.getEmailFromToken(refreshToken);
+        String savedToken = redisTemplate.opsForValue().get(RT_KEY_PREFIX + email);
+        if (savedToken == null || !savedToken.equals(refreshToken)) {
+            throw new RuntimeException("만료되었거나 유효하지 않은 세션입니다.");
+        }
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다."));
-        return jwtUtil.generateToken(user.getEmail(), user.getRole());
+        return jwtUtil.generateAccessToken(user.getEmail(), user.getRole());
     }
     public void logout(String email) {
+        if (email != null) {
+            redisTemplate.delete(RT_KEY_PREFIX + email);
+        }
         User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new RuntimeException("?ъ슜?먮? 李얠쓣 ???놁뒿?덈떎."));
+                .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다."));
 
         userActivityAuditLogger.log(
                 user.getId(),
@@ -806,7 +964,17 @@ public class UserService {
     private LoginResponseDto buildLoginResponse(User user, String message) {
         List<Account> accounts = accountRepository.findByUserId(user.getId());
         Long accountId = accounts.isEmpty() ? null : accounts.get(0).getId();
-        String token = jwtUtil.generateToken(user.getEmail(), user.getRole());
+        
+        String accessToken = jwtUtil.generateAccessToken(user.getEmail(), user.getRole());
+        String refreshToken = jwtUtil.generateRefreshToken(user.getEmail());
+
+        // Refresh Token Redis 저장
+        redisTemplate.opsForValue().set(
+                RT_KEY_PREFIX + user.getEmail(),
+                refreshToken,
+                REFRESH_TOKEN_VALIDITY_DAYS,
+                TimeUnit.DAYS
+        );
 
         userActivityAuditLogger.log(
                 user.getId(),
@@ -824,7 +992,8 @@ public class UserService {
                 normalizeProfileImageUrl(user.getProfileImageUrl()),
                 user.getRole(),
                 message,
-                token,
+                accessToken,
+                refreshToken,
                 accountId,
                 false,
                 isSocialPasswordMarker(user.getPasswordHash())

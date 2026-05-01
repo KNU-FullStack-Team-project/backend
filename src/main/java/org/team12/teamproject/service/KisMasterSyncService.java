@@ -114,22 +114,62 @@ public class KisMasterSyncService {
                         continue;
                     }
 
+                    // 업종코드 파싱 (KOSPI/KOSDAQ 위치 다름)
+                    String industry = "";
+                    if ("KOSPI".equals(marketType) && bytes.length > 106) {
+                        industry = new String(bytes, 103, 3, "MS949").trim();
+                    } else if ("KOSDAQ".equals(marketType) && bytes.length > 111) {
+                        industry = new String(bytes, 107, 4, "MS949").trim();
+                    }
+
+                    // 종목 타입 결정
+                    String stockType = "보통주";
+                    String effectiveShortCode = shortCode;
+
+                    if (shortCode.startsWith("5") || shortCode.endsWith("5") || shortCode.endsWith("7") || 
+                        stockName.endsWith("우") || stockName.endsWith("우B") || stockName.contains("(우)")) {
+                        stockType = "우선주";
+                    } else if (stockName.toUpperCase().contains("ETF") ||
+                               stockName.toUpperCase().contains("KODEX") ||
+                               stockName.toUpperCase().contains("TIGER") ||
+                               stockName.toUpperCase().contains("KBSTAR") ||
+                               stockName.toUpperCase().contains("ARIRANG") ||
+                               stockName.toUpperCase().contains("HANARO") ||
+                               stockName.toUpperCase().contains("KOSEF") ||
+                               stockName.toUpperCase().contains("ACE") ||
+                               stockName.toUpperCase().contains("SOL")) {
+                        // ETF는 수집 제외 (continue)
+                        continue;
+                    }
+
                     // DB 체크
-                    Stock existing = existingStocks.get(shortCode);
+                    Stock existing = existingStocks.get(effectiveShortCode);
                     if (existing == null) {
                         Stock newStock = Stock.builder()
-                                .stockCode(shortCode)
+                                .stockCode(effectiveShortCode)
                                 .stockName(stockName)
                                 .marketType(marketType)
+                                .industry(industry)
+                                .stockType(stockType)
                                 .isActive(true)
                                 .createdAt(LocalDateTime.now())
                                 .build();
                         newStocks.add(newStock);
                         insertCount++;
                     } else {
-                        // 이름이 바뀐 경우 (상호 변경 등) 업데이트
+                        // 이름이나 타입이 바뀐 경우 업데이트
+                        boolean updated = false;
                         if (!existing.getStockName().equals(stockName)) {
                             existing.updateName(stockName);
+                            updated = true;
+                        }
+                        // [추가] 종목 타입(보통주/우선주 등)이 변경되었거나 초기 설정인 경우 업데이트
+                        if (existing.getStockType() == null || !existing.getStockType().equals(stockType)) {
+                            existing.updateStockType(stockType);
+                            updated = true;
+                        }
+                        
+                        if (updated) {
                             updatedStocks.add(existing);
                             updateCount++;
                         }
@@ -166,18 +206,15 @@ public class KisMasterSyncService {
 
         String upperName = name.toUpperCase();
 
-        // 1. 단축코드가 '5'로 시작하는 경우 (일반적으로 ETN 등)
-        if (code != null && code.startsWith("5"))
-            return true;
+        // [변경] '5'로 시작하는 종목이나 ETF를 더 이상 제외하지 않습니다. (분류해서 사용)
+        
+        // 스팩(SPAC), ETF, 펀드 등 불필요한 것 제외 (단, 5로 시작하는 종목은 우선주로 취급하여 통과)
+        if (code != null && code.startsWith("5")) return false;
 
-        // 2. 시장구분 코드 체크는 KOSDAQ 종목(예: 'N')이 필터링되는 문제가 있어 제거합니다.
-
-        // 3. 스팩(SPAC), ETN, ETF, 펀드 및 기타 필터
         if (upperName.contains("스팩") ||
                 upperName.contains("기업인수목적") ||
                 upperName.contains("넥스트웨이브") ||
                 upperName.matches(".*제\\d+호.*") ||
-                upperName.contains("ETN") ||
                 upperName.contains("ETF") ||
                 upperName.contains("KODEX") ||
                 upperName.contains("TIGER") ||
@@ -187,13 +224,12 @@ public class KisMasterSyncService {
                 upperName.contains("KOSEF") ||
                 upperName.contains("ACE") ||
                 upperName.contains("SOL") ||
-                upperName.contains("TIMEFOLIO") ||
+                upperName.contains("채권") ||
+                upperName.contains("국고채") ||
                 upperName.contains("공모주") ||
                 upperName.contains("하이일드")) {
             return true;
         }
-
-        // 영문 포함 정규식 필터는 'CJ ENM' 같은 정상 종목을 날려버리므로 제거합니다.
 
         return false;
     }

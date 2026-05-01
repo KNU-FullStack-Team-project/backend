@@ -8,4 +8,6 @@ import lombok.Setter;
 public class AdminUpdateUserRequestDto {
     private String role;
     private String status;
+    private Double suspensionHours;
+    private String suspensionReason;
 }

@@ -23,6 +23,8 @@ public class CommunityPostDetailResponseDto {
     private Integer likeCount;
     private Integer dislikeCount;
     private Integer viewCount;
+    private String status;
+    private LocalDateTime deletedAt;
     private LocalDateTime createdAt;
 
     private Boolean likedByCurrentUser;

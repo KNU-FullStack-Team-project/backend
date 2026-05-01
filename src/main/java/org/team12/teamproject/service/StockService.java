@@ -69,7 +69,7 @@ public class StockService {
 
     private static class StockUpdateTask implements Comparable<StockUpdateTask> {
         final String symbol;
-        final int priority; // 1: 실시간 단건(LazyLoad), 2: 활성 종목, 3: 전체 일반 종목
+        final int priority; // 1: 최우선(0원/단건조회), 2: 활성(보유/관심), 3: 상위(거래량), 4: 일반(전체)
         final long enqueueTime;
 
         StockUpdateTask(String symbol, int priority) {
@@ -170,14 +170,11 @@ public class StockService {
     /**
      * 주식 목록 조회 (페이징)
      */
-    public PageResponseDto<StockResponseDto> getStockList(int page, int size) {
-        // 프론트엔드에서 0 또는 1로 보낼 수 있으므로 안전하게 처리 (0-indexed 기준 지원)
-        int effectivePage = (page <= 0) ? 1 : page;
-        int lower = (effectivePage - 1) * size;
-        int upper = effectivePage * size;
-
-        List<Stock> stockList = stockRepository.findStocksNative(lower, upper);
-        long totalElements = stockRepository.countValidStocks();
+    public PageResponseDto<StockResponseDto> getStockList(int page, int size, String industry, String stockType) {
+        int lower = (page - 1) * size;
+        int upper = page * size;
+        List<Stock> stockList = stockRepository.findStocksNativeWithFilters(lower, upper, industry, stockType);
+        long totalElements = stockRepository.countValidStocksWithFilters(industry, stockType);
         int totalPages = (int) Math.ceil((double) totalElements / size);
 
         List<StockResponseDto> content = new ArrayList<>();
@@ -195,7 +192,8 @@ public class StockService {
 
                 StockResponseDto.StockResponseDtoBuilder builder = StockResponseDto.builder()
                         .symbol(stock.getStockCode())
-                        .name(stock.getStockName());
+                        .name(stock.getStockName())
+                        .industry(stock.getIndustry());
 
                 if (cachedData != null) {
                     String[] parts = cachedData.split(":");
@@ -223,8 +221,16 @@ public class StockService {
                     builder.currentPrice("0").changeAmount("0").changeRate("0").volume("0").basePrice("0");
                 }
                 
-                content.add(builder.build());
-                enqueueUpdate(stock.getStockCode(), 1);
+                StockResponseDto dto = builder.build();
+                content.add(dto);
+
+                // [최적화] 데이터가 부실하거나 없는 경우 최우선(P1)으로 업데이트 예약
+                if (dto.getCurrentPrice().equals("0")) {
+                    enqueueUpdate(stock.getStockCode(), 1);
+                } else {
+                    // 리스트 노출 종목은 일반 우선순위(P3)로 최신화 유지
+                    enqueueUpdate(stock.getStockCode(), 3);
+                }
             }
         } catch (Exception e) {
             log.warn("주식 목록 조회 중 오류 (기본 정보로 대체): {}", e.getMessage());
@@ -232,6 +238,7 @@ public class StockService {
                     .map(s -> StockResponseDto.builder()
                             .symbol(s.getStockCode())
                             .name(s.getStockName())
+                            .industry(s.getIndustry())
                             .currentPrice("0")
                             .changeAmount("0")
                             .changeRate("0")
@@ -274,7 +281,52 @@ public class StockService {
             return new ArrayList<>();
         }
 
-        List<Stock> searchResults = stockRepository.searchStocks(keyword);
+        String searchKeyword = keyword.trim().toUpperCase();
+
+        // 사용자 편의를 위한 공통 영문명 - 한글 발음 매핑 (부분 일치 치환)
+        searchKeyword = searchKeyword
+                .replace("엘지", "LG")
+                .replace("에스케이", "SK")
+                .replace("케이티", "KT")
+                .replace("에이치디", "HD")
+                .replace("엔에이치", "NH")
+                .replace("씨제이", "CJ")
+                .replace("지에스", "GS")
+                .replace("엘에스", "LS")
+                .replace("엘엑스", "LX")
+                .replace("디비", "DB")
+                .replace("에이치엘", "HL")
+                .replace("케이비", "KB")
+                .replace("케이씨씨", "KCC")
+                .replace("포스코", "POSCO")
+                .replace("제이와이피", "JYP")
+                .replace("와이지", "YG")
+                .replace("에스엠", "SM");
+
+        // 사용자 편의를 위한 줄임말 및 별명 매핑
+        if (searchKeyword.equals("삼전")) {
+            searchKeyword = "삼성전자";
+        } else if (searchKeyword.equals("삼바")) {
+            searchKeyword = "삼성바이오로직스";
+        } else if (searchKeyword.equals("현차")) {
+            searchKeyword = "현대차";
+        } else if (searchKeyword.equals("하닉")) {
+            searchKeyword = "SK하이닉스";
+        } else if (searchKeyword.equals("하닉스")) {
+            searchKeyword = "SK하이닉스";
+        } else if (searchKeyword.equals("셀트")) {
+            searchKeyword = "셀트리온";
+        } else if (searchKeyword.equals("카카")) {
+            searchKeyword = "카카오";
+        } else if (searchKeyword.equals("에코")) {
+            searchKeyword = "에코프로";
+        } else if (searchKeyword.equals("에코비")) {
+            searchKeyword = "에코프로비엠";
+        } else if (searchKeyword.equals("네") || searchKeyword.equals("네이") || searchKeyword.equals("네이버")) {
+            searchKeyword = "NAVER";
+        }
+
+        List<Stock> searchResults = stockRepository.searchStocks(searchKeyword);
         return searchResults.stream()
                 .map(s -> {
                     String cacheKey = "stock:price:" + s.getStockCode();
@@ -282,7 +334,8 @@ public class StockService {
                     
                     StockResponseDto.StockResponseDtoBuilder builder = StockResponseDto.builder()
                             .symbol(s.getStockCode())
-                            .name(s.getStockName());
+                            .name(s.getStockName())
+                            .industry(s.getIndustry());
 
                     if (cachedData != null) {
                         String[] parts = cachedData.split(":");
@@ -294,7 +347,16 @@ public class StockService {
                                    .basePrice(parts[4]);
                         }
                     } else {
-                        builder.currentPrice("0").changeAmount("0").changeRate("0").volume("0").basePrice("0");
+                        // Redis 캐시 미스 시 DB 데이터 Fallback
+                        if (s.getCurrentPrice() != null) {
+                            builder.currentPrice(s.getCurrentPrice().toString())
+                                   .changeAmount(s.getChangeAmount() != null ? s.getChangeAmount().toString() : "0")
+                                   .changeRate(s.getChangeRate() != null ? s.getChangeRate().toString() : "0")
+                                   .volume(s.getVolume() != null ? s.getVolume().toString() : "0")
+                                   .basePrice(s.getCurrentPrice().toString());
+                        } else {
+                            builder.currentPrice("0").changeAmount("0").changeRate("0").volume("0").basePrice("0");
+                        }
                         enqueueUpdate(s.getStockCode(), 1); // 검색 결과도 최우선으로 수집 요청
                     }
                     return builder.build();
@@ -407,6 +469,7 @@ public class StockService {
             return StockResponseDto.builder()
                     .symbol(stockCode)
                     .name(s.getStockName())
+                    .industry(s.getIndustry())
                     .currentPrice(s.getCurrentPrice().toString())
                     .changeAmount(s.getChangeAmount() != null ? s.getChangeAmount().toString() : "0")
                     .changeRate(s.getChangeRate() != null ? s.getChangeRate().toString() : "0")
@@ -507,28 +570,43 @@ public class StockService {
             String endDate = now.format(DateTimeFormatter.ofPattern("yyyyMMdd"));
 
             if ("1D".equals(period)) {
-                resultData = fetchIntradayHistory(symbol, "0005");
+                // 당일 분봉 (최근 약 500개 봉)
+                resultData = fetchIntradayHistory(getRawCode(symbol), "0005");
             } else {
                 String periodCode = "D";
-                String startDate;
+                String startDate = now.minusMonths(3).format(DateTimeFormatter.ofPattern("yyyyMMdd")); // 기본 3개월
 
-                if ("1W".equals(period)) {
-                    startDate = now.minusDays(200).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                // 단일 문자 코드는 해당 단위의 전체 데이터를 의미함 (사용자 정의)
+                if ("W".equals(period)) {
+                    periodCode = "W";
+                    startDate = now.minusYears(2).format(DateTimeFormatter.ofPattern("yyyyMMdd")); // 주봉 2년
+                } else if ("M".equals(period)) {
+                    periodCode = "M";
+                    startDate = now.minusYears(5).format(DateTimeFormatter.ofPattern("yyyyMMdd")); // 월봉 5년
+                } else if ("D".equals(period)) {
+                    periodCode = "D";
+                    startDate = now.minusDays(99).format(DateTimeFormatter.ofPattern("yyyyMMdd")); // KIS API 최대 100일 제한
+                } 
+                // 기존 숫자형 코드들은 해당 기간의 '일봉'을 유지 (하위 호환성)
+                else if ("1W".equals(period)) {
+                    startDate = now.minusDays(7 + 50).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else if ("1M".equals(period)) {
-                    startDate = now.minusDays(200).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                    startDate = now.minusMonths(1).minusDays(50).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                } else if ("3M".equals(period)) {
+                    startDate = now.minusMonths(3).minusDays(50).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else if ("6M".equals(period)) {
                     periodCode = "M";
-                    startDate = now.minusMonths(6).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                    startDate = now.minusMonths(6).minusDays(50).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else if ("1Y".equals(period)) {
                     periodCode = "D"; 
-                    startDate = now.minusYears(2).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                    startDate = now.minusYears(1).minusDays(50).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 } else {
-                    startDate = now.minusDays(30).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                    startDate = now.minusDays(30 + 50).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
                 }
 
                 String url = apiUrl + "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
                         + "?FID_COND_MRKT_DIV_CODE=J"
-                        + "&FID_INPUT_ISCD=" + symbol
+                        + "&FID_INPUT_ISCD=" + getRawCode(symbol)
                         + "&FID_INPUT_DATE_1=" + startDate
                         + "&FID_INPUT_DATE_2=" + endDate
                         + "&FID_PERIOD_DIV_CODE=" + periodCode
@@ -675,8 +753,8 @@ public class StockService {
         }
 
         for (String symbol : activeCodes) {
-            webSocketClient.subscribe(symbol); // 실시간 구독이 풀렸을 수 있으니 재요청 (Client에서 중복 건너뜀)
-            enqueueUpdate(symbol, 2);
+            webSocketClient.subscribe(symbol); // 실시간 구독이 풀렸을 수 있으니 재요청
+            enqueueUpdate(symbol, 2); // 활성 종목은 High Priority(P2)
         }
         log.info(">>> [Scheduled] 활성 종목 시세 동기화 완료 (총 {}건)", activeCodes.size());
     }
@@ -684,13 +762,13 @@ public class StockService {
     /**
      * 전체 종목 시세를 순차적으로 갱신 (사용자 요청으로 주기를 1시간에서 30분으로 단축)
      */
-    @Scheduled(fixedDelay = 1800000) // 30분마다 전체 갱신
+    @Scheduled(fixedDelay = 3600000) // 1시간마다 전체 갱신 (부하 방지를 위해 주기 연장)
     public void updateAllStockPricesToRedis() {
         log.info(">>> [Scheduled] 전체 종목 시세 백그라운드 갱신 시작 (1000ms 간격)...");
         List<Stock> allStocks = stockRepository.findAll();
 
         for (Stock stock : allStocks) {
-            enqueueUpdate(stock.getStockCode(), 3);
+            enqueueUpdate(stock.getStockCode(), 4); // 전체 종목은 Low Priority(P4)
         }
         log.info(">>> [Scheduled] 전체 종목 시세 백그라운드 갱신 완료");
     }
@@ -703,7 +781,13 @@ public class StockService {
                 dto.getChangeRate(),
                 dto.getVolume(),
                 dto.getBasePrice());
-        redisTemplate.opsForValue().set(cacheKey, value, Duration.ofMinutes(30));
+        try {
+            // [최적화] 중요도에 따른 캐시 TTL 차등 적용
+            Duration ttl = Duration.ofMinutes(30); 
+            redisTemplate.opsForValue().set(cacheKey, value, ttl);
+        } catch (Exception e) {
+            log.warn("Redis 시세 저장 실패 ({}): {}", dto.getSymbol(), e.getMessage());
+        }
         
         // [중요] DB의 시세 정보도 비동기적으로 업데이트하여 Fallback 시스템 유지
         try {
@@ -736,19 +820,24 @@ public class StockService {
         }
     }
 
+    private String getRawCode(String symbol) {
+        if (symbol == null) return null;
+        if (symbol.startsWith("K") || symbol.startsWith("Q")) {
+            return symbol.substring(1);
+        }
+        return symbol;
+    }
+
     /**
      * KIS API 호출
      */
     private StockResponseDto fetchPriceFromKisApi(String stockCode) {
+        String rawCode = getRawCode(stockCode);
+        String marketDiv = "J"; 
         try {
             ensureAccessToken();
 
-            // [최적화] 시장 구분 코드 처리 (기본: J)
-            String marketDiv = "J"; 
-            
-            String url = apiUrl
-                    + "/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=" + marketDiv 
-                    + "&FID_INPUT_ISCD=" + stockCode;
+            String url = apiUrl + "/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=" + marketDiv + "&FID_INPUT_ISCD=" + rawCode;
             
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
@@ -851,6 +940,9 @@ public class StockService {
                 log.warn("Redis에 토큰 저장 실패: {}", e.getMessage());
             }
         }
+    }
+    public List<String> getAllIndustries() {
+        return stockRepository.findAllIndustries();
     }
 
     @org.springframework.transaction.annotation.Transactional

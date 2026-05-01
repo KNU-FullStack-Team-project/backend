@@ -72,7 +72,9 @@ public class SecurityConfig {
                                 List.of(
                                                 "http://localhost:3000",
                                                 "http://localhost:5173",
-                                                "http://localhost:5174"));
+                                                "http://localhost:5174",
+                                                "https://mockinvest.kro.kr",
+                                                "http://mockinvest.kro.kr"));
                 configuration.setAllowedMethods(
                                 List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
                 configuration.setAllowedHeaders(List.of("*"));

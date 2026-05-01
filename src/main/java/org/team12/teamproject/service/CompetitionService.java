@@ -38,20 +38,12 @@ public class CompetitionService {
                        c.initial_seed_money,
                        c.max_participants,
                        c.is_public,
-                       COUNT(CASE WHEN cp.participation_status = 'JOINED' THEN 1 END) AS participant_count
+                       (SELECT COUNT(*) 
+                        FROM competition_participants cp 
+                        WHERE cp.competition_id = c.competition_id 
+                          AND cp.participation_status = 'JOINED') AS participant_count
                 FROM competitions c
-                LEFT JOIN competition_participants cp
-                  ON c.competition_id = cp.competition_id
                 WHERE (? = 1 OR c.is_public = 1)
-                GROUP BY c.competition_id,
-                         c.title,
-                         c.description,
-                         c.status,
-                         c.start_at,
-                         c.end_at,
-                         c.initial_seed_money,
-                         c.max_participants,
-                         c.is_public
                 ORDER BY c.competition_id DESC
                 """;
 
@@ -87,21 +79,13 @@ public class CompetitionService {
                        c.initial_seed_money,
                        c.max_participants,
                        c.is_public,
-                       COUNT(CASE WHEN cp.participation_status = 'JOINED' THEN 1 END) AS participant_count
+                       (SELECT COUNT(*) 
+                        FROM competition_participants cp 
+                        WHERE cp.competition_id = c.competition_id 
+                          AND cp.participation_status = 'JOINED') AS participant_count
                 FROM competitions c
-                LEFT JOIN competition_participants cp
-                  ON c.competition_id = cp.competition_id
                 WHERE c.competition_id = ?
                   AND (? = 1 OR c.is_public = 1)
-                GROUP BY c.competition_id,
-                         c.title,
-                         c.description,
-                         c.status,
-                         c.start_at,
-                         c.end_at,
-                         c.initial_seed_money,
-                         c.max_participants,
-                         c.is_public
                 """;
 
         List<CompetitionDetailResponseDto> result = jdbcTemplate.query(

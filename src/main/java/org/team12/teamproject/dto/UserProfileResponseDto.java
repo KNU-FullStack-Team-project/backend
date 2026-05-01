@@ -13,6 +13,8 @@ public class UserProfileResponseDto {
     private Boolean socialLogin;
     private String role;
     private String status;
+    private String suspendedUntil;
+    private String suspensionReason;
     private String createdAt;
     private Long accountId;
     private Integer accountCount;
