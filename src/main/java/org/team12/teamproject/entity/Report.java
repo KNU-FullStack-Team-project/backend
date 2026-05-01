@@ -6,24 +6,41 @@ import lombok.*;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "comment_reports")
+@Table(
+        name = "reports",
+        uniqueConstraints = {
+                @UniqueConstraint(
+                        name = "uq_reports_user_target",
+                        columnNames = {"target_type", "target_id", "reporter_user_id"}
+                )
+        }
+)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
 @Builder
-public class CommentReport {
+public class Report {
+
+    public static final String TARGET_TYPE_POST = "POST";
+    public static final String TARGET_TYPE_COMMENT = "COMMENT";
 
     @Id
-    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "comment_reports_seq_generator")
-    @SequenceGenerator(name = "comment_reports_seq_generator", sequenceName = "COMMENT_REPORTS_SEQ", allocationSize = 1)
+    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "reports_seq_generator")
+    @SequenceGenerator(
+            name = "reports_seq_generator",
+            sequenceName = "REPORTS_SEQ",
+            allocationSize = 1
+    )
     @Column(name = "report_id")
     private Long id;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "comment_id", nullable = false)
-    private Comment comment;
+    @Column(name = "target_type", nullable = false, length = 20)
+    private String targetType;
 
-    @ManyToOne(fetch = FetchType.LAZY)
+    @Column(name = "target_id", nullable = false)
+    private Long targetId;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "reporter_user_id", nullable = false)
     private User reporterUser;
 

@@ -14,23 +14,21 @@ import org.team12.teamproject.dto.CommunityPostUpdateRequestDto;
 import org.team12.teamproject.dto.CommunityReportRequestDto;
 import org.team12.teamproject.entity.Board;
 import org.team12.teamproject.entity.Comment;
-import org.team12.teamproject.entity.CommentReport;
 import org.team12.teamproject.entity.Post;
 import org.team12.teamproject.entity.PostAttachment;
-import org.team12.teamproject.entity.PostLike;
-import org.team12.teamproject.entity.PostReport;
+import org.team12.teamproject.entity.Report;
 import org.team12.teamproject.entity.Stock;
 import org.team12.teamproject.entity.User;
+import org.team12.teamproject.entity.Vote;
 import org.team12.teamproject.repository.BoardRepository;
-import org.team12.teamproject.repository.CommentReportRepository;
 import org.team12.teamproject.repository.CommentRepository;
 import org.team12.teamproject.repository.OrderRepository;
 import org.team12.teamproject.repository.PostAttachmentRepository;
-import org.team12.teamproject.repository.PostLikeRepository;
-import org.team12.teamproject.repository.PostReportRepository;
 import org.team12.teamproject.repository.PostRepository;
+import org.team12.teamproject.repository.ReportRepository;
 import org.team12.teamproject.repository.StockRepository;
 import org.team12.teamproject.repository.UserRepository;
+import org.team12.teamproject.repository.VoteRepository;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -58,9 +56,8 @@ public class CommunityService {
     private final StockRepository stockRepository;
     private final UserRepository userRepository;
     private final OrderRepository orderRepository;
-    private final PostLikeRepository postLikeRepository;
-    private final PostReportRepository postReportRepository;
-    private final CommentReportRepository commentReportRepository;
+    private final VoteRepository voteRepository;
+    private final ReportRepository reportRepository;
     private final PostAttachmentRepository postAttachmentRepository;
     private final UserActivityAuditLogger userActivityAuditLogger;
 
@@ -258,13 +255,7 @@ public class CommunityService {
                 ? commentRepository.findByPostIdOrderByCreatedAtAsc(postId)
                 : commentRepository.findByPostIdAndStatusOrderByCreatedAtAsc(postId, "NORMAL"))
                 .stream()
-                .map(comment -> CommunityCommentResponseDto.builder()
-                        .commentId(comment.getId())
-                        .userId(comment.getUser().getId())
-                        .nickname(comment.getUser().getNickname())
-                        .content(comment.getContent())
-                        .createdAt(comment.getCreatedAt())
-                        .build())
+                .map(this::toCommentResponseDto)
                 .toList();
 
         List<CommunityAttachmentResponseDto> attachments = postAttachmentRepository
@@ -287,14 +278,18 @@ public class CommunityService {
         if (email != null) {
             User loginUser = userRepository.findByEmail(email).orElse(null);
             if (loginUser != null) {
-                PostLike myVote = postLikeRepository
-                        .findByPostIdAndUserId(postId, loginUser.getId())
+                Vote myVote = voteRepository
+                        .findByTargetTypeAndTargetIdAndUserId(
+                                Vote.TARGET_TYPE_POST,
+                                postId,
+                                loginUser.getId()
+                        )
                         .orElse(null);
 
                 if (myVote != null) {
                     votedByCurrentUser = true;
                     myVoteType = myVote.getVoteType();
-                    likedByCurrentUser = PostLike.VOTE_TYPE_LIKE.equals(myVote.getVoteType());
+                    likedByCurrentUser = Vote.VOTE_TYPE_LIKE.equals(myVote.getVoteType());
                 }
             }
         }
@@ -318,6 +313,8 @@ public class CommunityService {
                 .isNotice(post.getIsNotice())
                 .createdAt(post.getCreatedAt())
                 .likedByCurrentUser(likedByCurrentUser)
+                .votedByCurrentUser(votedByCurrentUser)
+                .myVoteType(myVoteType)
                 .comments(comments)
                 .attachments(attachments)
                 .build();
@@ -332,43 +329,15 @@ public class CommunityService {
 
     @Transactional
     public void likePost(Long postId, String email) {
-        Post post = postRepository.findByIdAndStatus(postId, "NORMAL")
-                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 게시글입니다."));
-
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 사용자입니다."));
-
-        if (post.getUser().getId().equals(user.getId())) {
-            throw new IllegalArgumentException("본인 글은 추천할 수 없습니다.");
-        }
-
-        boolean alreadyVoted = postLikeRepository.existsByPostIdAndUserId(postId, user.getId());
-        if (alreadyVoted) {
-            throw new IllegalArgumentException("이미 추천 또는 비추천한 게시글입니다.");
-        }
-
-        PostLike postLike = PostLike.builder()
-                .post(post)
-                .user(user)
-                .voteType(PostLike.VOTE_TYPE_LIKE)
-                .createdAt(LocalDateTime.now())
-                .build();
-
-        postLikeRepository.save(postLike);
-        post.increaseLikeCount();
-
-        userActivityAuditLogger.log(
-                user.getId(),
-                user.getEmail(),
-                "POST_LIKE",
-                "POST",
-                String.valueOf(post.getId()),
-                abbreviateForLog(post.getTitle())
-        );
+        votePost(postId, email, Vote.VOTE_TYPE_LIKE);
     }
 
     @Transactional
     public void dislikePost(Long postId, String email) {
+        votePost(postId, email, Vote.VOTE_TYPE_DISLIKE);
+    }
+
+    private void votePost(Long postId, String email, String voteType) {
         Post post = postRepository.findByIdAndStatus(postId, "NORMAL")
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 게시글입니다."));
 
@@ -376,28 +345,39 @@ public class CommunityService {
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 사용자입니다."));
 
         if (post.getUser().getId().equals(user.getId())) {
-            throw new IllegalArgumentException("본인 글은 비추천할 수 없습니다.");
+            throw new IllegalArgumentException("본인 글은 추천/비추천할 수 없습니다.");
         }
 
-        boolean alreadyVoted = postLikeRepository.existsByPostIdAndUserId(postId, user.getId());
+        boolean alreadyVoted = voteRepository.existsByTargetTypeAndTargetIdAndUserId(
+                Vote.TARGET_TYPE_POST,
+                postId,
+                user.getId()
+        );
+
         if (alreadyVoted) {
             throw new IllegalArgumentException("이미 추천 또는 비추천한 게시글입니다.");
         }
 
-        PostLike postLike = PostLike.builder()
-                .post(post)
+        Vote vote = Vote.builder()
+                .targetType(Vote.TARGET_TYPE_POST)
+                .targetId(postId)
                 .user(user)
-                .voteType(PostLike.VOTE_TYPE_DISLIKE)
+                .voteType(voteType)
                 .createdAt(LocalDateTime.now())
                 .build();
 
-        postLikeRepository.save(postLike);
-        post.increaseDislikeCount();
+        voteRepository.save(vote);
+
+        if (Vote.VOTE_TYPE_LIKE.equals(voteType)) {
+            post.increaseLikeCount();
+        } else {
+            post.increaseDislikeCount();
+        }
 
         userActivityAuditLogger.log(
                 user.getId(),
                 user.getEmail(),
-                "POST_DISLIKE",
+                Vote.VOTE_TYPE_LIKE.equals(voteType) ? "POST_LIKE" : "POST_DISLIKE",
                 "POST",
                 String.valueOf(post.getId()),
                 abbreviateForLog(post.getTitle())
@@ -416,10 +396,25 @@ public class CommunityService {
             throw new IllegalArgumentException("댓글 내용을 입력해주세요.");
         }
 
+        Comment parentComment = null;
+
+        if (request.getParentCommentId() != null) {
+            parentComment = commentRepository.findByIdAndStatus(request.getParentCommentId(), "NORMAL")
+                    .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 부모 댓글입니다."));
+
+            if (!parentComment.getPost().getId().equals(postId)) {
+                throw new IllegalArgumentException("해당 게시글의 댓글에만 답글을 작성할 수 있습니다.");
+            }
+
+            if (parentComment.getParentComment() != null) {
+                throw new IllegalArgumentException("대댓글에는 답글을 작성할 수 없습니다.");
+            }
+        }
+
         Comment comment = Comment.builder()
                 .post(post)
                 .user(user)
-                .parentComment(null)
+                .parentComment(parentComment)
                 .content(request.getContent().trim())
                 .status("NORMAL")
                 .createdAt(LocalDateTime.now())
@@ -432,7 +427,7 @@ public class CommunityService {
         userActivityAuditLogger.log(
                 user.getId(),
                 user.getEmail(),
-                "COMMENT_CREATE",
+                parentComment == null ? "COMMENT_CREATE" : "REPLY_CREATE",
                 "COMMENT",
                 String.valueOf(commentId),
                 abbreviateForLog(comment.getContent())
@@ -445,13 +440,7 @@ public class CommunityService {
     public List<CommunityCommentResponseDto> getComments(Long postId) {
         return commentRepository.findByPostIdAndStatusOrderByCreatedAtAsc(postId, "NORMAL")
                 .stream()
-                .map(comment -> CommunityCommentResponseDto.builder()
-                        .commentId(comment.getId())
-                        .userId(comment.getUser().getId())
-                        .nickname(comment.getUser().getNickname())
-                        .content(comment.getContent())
-                        .createdAt(comment.getCreatedAt())
-                        .build())
+                .map(this::toCommentResponseDto)
                 .toList();
     }
 
@@ -560,13 +549,19 @@ public class CommunityService {
             throw new IllegalArgumentException("본인 게시글은 신고할 수 없습니다.");
         }
 
-        boolean alreadyReported = postReportRepository.existsByPostIdAndReporterUserId(postId, reporter.getId());
+        boolean alreadyReported = reportRepository.existsByTargetTypeAndTargetIdAndReporterUserId(
+                Report.TARGET_TYPE_POST,
+                postId,
+                reporter.getId()
+        );
+
         if (alreadyReported) {
             throw new IllegalArgumentException("이미 신고한 게시글입니다.");
         }
 
-        PostReport postReport = PostReport.builder()
-                .post(post)
+        Report report = Report.builder()
+                .targetType(Report.TARGET_TYPE_POST)
+                .targetId(postId)
                 .reporterUser(reporter)
                 .reason(request.getReason().trim())
                 .detail(normalizeDetail(request.getDetail()))
@@ -574,7 +569,7 @@ public class CommunityService {
                 .createdAt(LocalDateTime.now())
                 .build();
 
-        postReportRepository.save(postReport);
+        reportRepository.save(report);
         post.increaseReportCount();
 
         userActivityAuditLogger.log(
@@ -601,13 +596,19 @@ public class CommunityService {
             throw new IllegalArgumentException("본인 댓글은 신고할 수 없습니다.");
         }
 
-        boolean alreadyReported = commentReportRepository.existsByCommentIdAndReporterUserId(commentId, reporter.getId());
+        boolean alreadyReported = reportRepository.existsByTargetTypeAndTargetIdAndReporterUserId(
+                Report.TARGET_TYPE_COMMENT,
+                commentId,
+                reporter.getId()
+        );
+
         if (alreadyReported) {
             throw new IllegalArgumentException("이미 신고한 댓글입니다.");
         }
 
-        CommentReport commentReport = CommentReport.builder()
-                .comment(comment)
+        Report report = Report.builder()
+                .targetType(Report.TARGET_TYPE_COMMENT)
+                .targetId(commentId)
                 .reporterUser(reporter)
                 .reason(request.getReason().trim())
                 .detail(normalizeDetail(request.getDetail()))
@@ -615,7 +616,7 @@ public class CommunityService {
                 .createdAt(LocalDateTime.now())
                 .build();
 
-        commentReportRepository.save(commentReport);
+        reportRepository.save(report);
 
         userActivityAuditLogger.log(
                 reporter.getId(),
@@ -698,6 +699,21 @@ public class CommunityService {
                         .createdAt(post.getCreatedAt())
                         .build())
                 .toList();
+    }
+
+    private CommunityCommentResponseDto toCommentResponseDto(Comment comment) {
+        return CommunityCommentResponseDto.builder()
+                .commentId(comment.getId())
+                .parentCommentId(
+                        comment.getParentComment() != null
+                                ? comment.getParentComment().getId()
+                                : null
+                )
+                .userId(comment.getUser().getId())
+                .nickname(comment.getUser().getNickname())
+                .content(comment.getContent())
+                .createdAt(comment.getCreatedAt())
+                .build();
     }
 
     private void validateReportReason(CommunityReportRequestDto request) {
