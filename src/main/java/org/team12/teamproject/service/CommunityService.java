@@ -63,6 +63,7 @@ public class CommunityService {
     private final CommentReportRepository commentReportRepository;
     private final PostAttachmentRepository postAttachmentRepository;
     private final UserActivityAuditLogger userActivityAuditLogger;
+    private final AdminActionAuditLogger adminActionAuditLogger;
 
     private static final String STOCK_DISCUSSION_BOARD_CODE = "STOCK_DISCUSSION";
     private static final String FREE_BOARD_CODE = "FREE";
@@ -194,6 +195,16 @@ public class CommunityService {
                 String.valueOf(savedPost.getId()),
                 "[GLOBAL_NOTICE] " + abbreviateForLog(savedPost.getTitle()) + " | " + abbreviateForLog(savedPost.getContent())
         );
+        adminActionAuditLogger.log(
+                user.getId(),
+                user.getEmail(),
+                "NOTICE_CREATE",
+                "POST",
+                String.valueOf(savedPost.getId()),
+                "board=" + NOTICE_BOARD_CODE
+                        + "; title=" + abbreviateForLog(savedPost.getTitle())
+                        + "; content=" + abbreviateForLog(savedPost.getContent())
+        );
 
         return savedPost.getId();
     }
@@ -243,6 +254,18 @@ public class CommunityService {
                 String.valueOf(savedPost.getId()),
                 abbreviateForLog(savedPost.getTitle()) + " | " + abbreviateForLog(savedPost.getContent())
         );
+        if (isNotice) {
+            adminActionAuditLogger.log(
+                    user.getId(),
+                    user.getEmail(),
+                    "NOTICE_CREATE",
+                    "POST",
+                    String.valueOf(savedPost.getId()),
+                    "board=" + STOCK_DISCUSSION_BOARD_CODE
+                            + "; title=" + abbreviateForLog(savedPost.getTitle())
+                            + "; content=" + abbreviateForLog(savedPost.getContent())
+            );
+        }
 
         return savedPost.getId();
     }
@@ -464,6 +487,10 @@ public class CommunityService {
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 사용자입니다."));
 
         boolean isOwner = post.getUser().getId().equals(loginUser.getId());
+        Long targetUserId = post.getUser().getId();
+        String beforeTitle = post.getTitle();
+        String beforeContent = post.getContent();
+        Boolean beforeIsNotice = post.getIsNotice();
 
         if (!isAdmin && !isOwner) {
             throw new IllegalArgumentException("본인 게시글만 수정할 수 있습니다.");
@@ -487,8 +514,32 @@ public class CommunityService {
                 "POST_UPDATE",
                 "POST",
                 String.valueOf(post.getId()),
-                abbreviateForLog(post.getTitle()) + " | " + abbreviateForLog(post.getContent())
+                "targetUserId=" + targetUserId
+                        + "; ownerAction=" + isOwner
+                        + "; beforeIsNotice=" + beforeIsNotice
+                        + "; afterIsNotice=" + post.getIsNotice()
+                        + "; beforeTitle=" + abbreviateForLog(beforeTitle)
+                        + "; beforeContent=" + abbreviateForLog(beforeContent)
+                        + "; afterTitle=" + abbreviateForLog(post.getTitle())
+                        + "; afterContent=" + abbreviateForLog(post.getContent())
         );
+        if (isAdmin) {
+            adminActionAuditLogger.log(
+                    loginUser.getId(),
+                    loginUser.getEmail(),
+                    "POST_UPDATE",
+                    "POST",
+                    String.valueOf(post.getId()),
+                    "targetUserId=" + targetUserId
+                            + "; ownerAction=" + isOwner
+                            + "; beforeIsNotice=" + beforeIsNotice
+                            + "; afterIsNotice=" + post.getIsNotice()
+                            + "; beforeTitle=" + abbreviateForLog(beforeTitle)
+                            + "; afterTitle=" + abbreviateForLog(post.getTitle())
+                            + "; beforeContent=" + abbreviateForLog(beforeContent)
+                            + "; afterContent=" + abbreviateForLog(post.getContent())
+            );
+        }
     }
 
     @Transactional
@@ -511,8 +562,26 @@ public class CommunityService {
                 "POST_DELETE",
                 "POST",
                 String.valueOf(post.getId()),
-                abbreviateForLog(post.getTitle()) + " | " + abbreviateForLog(post.getContent())
+                "targetUserId=" + post.getUser().getId()
+                        + "; ownerAction=" + isOwner
+                        + "; isNotice=" + post.getIsNotice()
+                        + "; title=" + abbreviateForLog(post.getTitle())
+                        + "; content=" + abbreviateForLog(post.getContent())
         );
+        if (isAdmin) {
+            adminActionAuditLogger.log(
+                    loginUser.getId(),
+                    loginUser.getEmail(),
+                    "POST_DELETE",
+                    "POST",
+                    String.valueOf(post.getId()),
+                    "targetUserId=" + post.getUser().getId()
+                            + "; ownerAction=" + isOwner
+                            + "; isNotice=" + post.getIsNotice()
+                            + "; title=" + abbreviateForLog(post.getTitle())
+                            + "; content=" + abbreviateForLog(post.getContent())
+            );
+        }
 
         post.softDelete();
     }
@@ -539,8 +608,24 @@ public class CommunityService {
                 "COMMENT_DELETE",
                 "COMMENT",
                 String.valueOf(comment.getId()),
-                abbreviateForLog(comment.getContent())
+                "targetUserId=" + comment.getUser().getId()
+                        + "; ownerAction=" + isOwner
+                        + "; postId=" + post.getId()
+                        + "; content=" + abbreviateForLog(comment.getContent())
         );
+        if (isAdmin) {
+            adminActionAuditLogger.log(
+                    loginUser.getId(),
+                    loginUser.getEmail(),
+                    "COMMENT_DELETE",
+                    "COMMENT",
+                    String.valueOf(comment.getId()),
+                    "targetUserId=" + comment.getUser().getId()
+                            + "; ownerAction=" + isOwner
+                            + "; postId=" + post.getId()
+                            + "; content=" + abbreviateForLog(comment.getContent())
+            );
+        }
 
         comment.softDelete();
         post.decreaseCommentCount();
@@ -878,14 +963,15 @@ public class CommunityService {
 
         String normalized = value.replaceAll("<[^>]*>", " ")
                 .replaceAll("&nbsp;", " ")
+                .replace(";", ",")
                 .replaceAll("\\s+", " ")
                 .trim();
 
-        if (normalized.length() <= 60) {
+        if (normalized.length() <= 500) {
             return normalized;
         }
 
-        return normalized.substring(0, 60) + "...";
+        return normalized.substring(0, 500) + "...";
     }
 
     @Transactional(readOnly = true)
@@ -975,6 +1061,18 @@ public class CommunityService {
                 String.valueOf(savedPost.getId()),
                 abbreviateForLog(savedPost.getTitle()) + " | " + abbreviateForLog(savedPost.getContent())
         );
+        if (isNotice) {
+            adminActionAuditLogger.log(
+                    user.getId(),
+                    user.getEmail(),
+                    "NOTICE_CREATE",
+                    "POST",
+                    String.valueOf(savedPost.getId()),
+                    "board=" + FREE_BOARD_CODE
+                            + "; title=" + abbreviateForLog(savedPost.getTitle())
+                            + "; content=" + abbreviateForLog(savedPost.getContent())
+            );
+        }
 
         return savedPost.getId();
     }

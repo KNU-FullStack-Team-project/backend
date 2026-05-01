@@ -26,6 +26,7 @@ public class InquiryService {
     private final UserRepository userRepository;
     private final NotificationService notificationService;
     private final UserActivityAuditLogger userActivityAuditLogger;
+    private final AdminActionAuditLogger adminActionAuditLogger;
 
     @Transactional
     public Long createInquiry(InquiryCreateRequestDto requestDto, String email) {
@@ -121,6 +122,15 @@ public class InquiryService {
                 String.valueOf(inquiryId),
                 "answered_by_admin=" + admin.getId()
         );
+        adminActionAuditLogger.log(
+                admin.getId(),
+                admin.getEmail(),
+                "INQUIRY_REPLY",
+                "INQUIRY",
+                String.valueOf(inquiryId),
+                "targetUserId=" + inquiry.getUser().getId()
+                        + "; answer=" + abbreviateForLog(answerContent)
+        );
 
         // 작성자에게 실시간 알림 발송
         notificationService.sendNotification(
@@ -128,6 +138,14 @@ public class InquiryService {
                 "문의 답변 등록",
                 "남기신 문의에 대한 답변이 등록되었습니다.",
                 NotificationType.INQUIRY);
+    }
+
+    private String abbreviateForLog(String value) {
+        if (value == null) {
+            return "-";
+        }
+        String normalized = value.replaceAll("\\s+", " ").trim();
+        return normalized.length() <= 120 ? normalized : normalized.substring(0, 120) + "...";
     }
 
     @Transactional

@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.team12.teamproject.dto.AdminActionLogItemDto;
 import org.team12.teamproject.dto.AdminLoginLogItemDto;
 import org.team12.teamproject.dto.UserActivityItemDto;
 import org.team12.teamproject.entity.User;
@@ -37,6 +38,12 @@ public class UserActivityService {
     private static final Pattern LOG_LINE_PATTERN = Pattern.compile(
             "^(?<timestamp>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}) " +
                     "userId=(?<userId>.*?), userEmail=(?<userEmail>.*?), action=(?<action>.*?), " +
+                    "targetType=(?<targetType>.*?), targetId=(?<targetId>.*?), detail=(?<detail>.*)$"
+    );
+
+    private static final Pattern ADMIN_LOG_LINE_PATTERN = Pattern.compile(
+            "^(?<timestamp>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}) " +
+                    "adminUserId=(?<adminUserId>.*?), adminEmail=(?<adminEmail>.*?), action=(?<action>.*?), " +
                     "targetType=(?<targetType>.*?), targetId=(?<targetId>.*?), detail=(?<detail>.*)$"
     );
 
@@ -77,6 +84,19 @@ public class UserActivityService {
                 .toList();
     }
 
+    @Transactional(readOnly = true)
+    public List<AdminActionLogItemDto> getAdminActionLogs() {
+        Map<Long, User> userMap = userRepository.findAll().stream()
+                .collect(Collectors.toMap(User::getId, Function.identity()));
+
+        return readAdminLogFiles()
+                .map(this::parseAdminLine)
+                .flatMap(java.util.Optional::stream)
+                .sorted(Comparator.comparing(ParsedAdminAction::occurredAt).reversed())
+                .map(item -> toAdminActionLogDto(item, userMap))
+                .toList();
+    }
+
     private Stream<String> readLogFiles() {
         Path logDir = Paths.get("logs");
         if (!Files.exists(logDir)) {
@@ -91,6 +111,24 @@ public class UserActivityService {
                     .flatMap(this::readLinesSafely);
         } catch (IOException e) {
             log.warn("사용자 활동 로그 디렉터리 조회 실패: {}", e.getMessage());
+            return Stream.empty();
+        }
+    }
+
+    private Stream<String> readAdminLogFiles() {
+        Path logDir = Paths.get("logs");
+        if (!Files.exists(logDir)) {
+            return Stream.empty();
+        }
+
+        try {
+            return Files.list(logDir)
+                    .filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().startsWith("admin-action"))
+                    .sorted(Comparator.comparing(Path::toString).reversed())
+                    .flatMap(this::readLinesSafely);
+        } catch (IOException e) {
+            log.warn("관리자 행동 로그 디렉터리 조회 실패: {}", e.getMessage());
             return Stream.empty();
         }
     }
@@ -126,6 +164,28 @@ public class UserActivityService {
         }
     }
 
+    private java.util.Optional<ParsedAdminAction> parseAdminLine(String line) {
+        Matcher matcher = ADMIN_LOG_LINE_PATTERN.matcher(line);
+        if (!matcher.matches()) {
+            return java.util.Optional.empty();
+        }
+
+        try {
+            return java.util.Optional.of(new ParsedAdminAction(
+                    matcher.group("adminUserId").trim(),
+                    matcher.group("adminEmail").trim(),
+                    matcher.group("action").trim(),
+                    matcher.group("targetType").trim(),
+                    matcher.group("targetId").trim(),
+                    matcher.group("detail").trim(),
+                    LocalDateTime.parse(matcher.group("timestamp"), LOG_TIMESTAMP_FORMAT)
+            ));
+        } catch (DateTimeParseException e) {
+            log.warn("관리자 행동 로그 시간 파싱 실패: {}", line);
+            return java.util.Optional.empty();
+        }
+    }
+
     private UserActivityItemDto toDto(ParsedActivity activity, User user) {
         return UserActivityItemDto.builder()
                 .actionType(activity.action())
@@ -151,6 +211,27 @@ public class UserActivityService {
                 .nickname(user != null ? user.getNickname() : "-")
                 .loginId(activity.userEmail())
                 .actionLabel("LOGIN".equals(activity.action()) ? "로그인" : "로그아웃")
+                .build();
+    }
+
+    private AdminActionLogItemDto toAdminActionLogDto(ParsedAdminAction action, Map<Long, User> userMap) {
+        User admin = null;
+        try {
+            admin = userMap.get(Long.parseLong(action.adminUserId()));
+        } catch (NumberFormatException ignored) {
+        }
+
+        return AdminActionLogItemDto.builder()
+                .occurredAt(action.occurredAt().toString())
+                .adminUserId(action.adminUserId())
+                .adminEmail(action.adminEmail())
+                .adminNickname(admin != null ? admin.getNickname() : "-")
+                .actionType(action.action())
+                .actionLabel(toAdminActionLabel(action.action()))
+                .targetType(action.targetType())
+                .targetId(action.targetId())
+                .targetLabel(toTargetLabel(action.targetType(), action.targetId()))
+                .detail(action.detail())
                 .build();
     }
 
@@ -197,6 +278,18 @@ public class UserActivityService {
             case "REPORT_CREATE" -> "신고 접수";
             case "SUSPENSION_SET" -> "계정 정지";
             case "SUSPENSION_RELEASE" -> "정지 해제";
+            default -> action;
+        };
+    }
+
+    private String toAdminActionLabel(String action) {
+        return switch (action) {
+            case "NOTICE_CREATE" -> "공지 작성";
+            case "INQUIRY_REPLY" -> "문의 답변";
+            case "POST_UPDATE" -> "게시글 수정";
+            case "POST_DELETE" -> "게시글 삭제";
+            case "COMMENT_DELETE" -> "댓글 삭제";
+            case "USER_UPDATE" -> "회원 정보 변경";
             default -> action;
         };
     }
@@ -364,6 +457,17 @@ public class UserActivityService {
     private record ParsedActivity(
             String userId,
             String userEmail,
+            String action,
+            String targetType,
+            String targetId,
+            String detail,
+            LocalDateTime occurredAt
+    ) {
+    }
+
+    private record ParsedAdminAction(
+            String adminUserId,
+            String adminEmail,
             String action,
             String targetType,
             String targetId,

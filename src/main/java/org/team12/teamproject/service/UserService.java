@@ -50,6 +50,9 @@ public class UserService {
 
     private static final int CAPTCHA_THRESHOLD = 5;
     private static final String SOCIAL_GOOGLE_PASSWORD_MARKER = "{social}google";
+    private static final int MAX_NICKNAME_LENGTH = 12;
+    private static final String NICKNAME_PATTERN = "^[A-Za-z0-9가-힣]{1,12}$";
+    private static final String NICKNAME_RULE_MESSAGE = "닉네임은 12자 이하의 한글, 영문, 숫자만 사용할 수 있습니다.";
     private static final DateTimeFormatter SUSPENSION_TIME_FORMAT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
@@ -62,6 +65,7 @@ public class UserService {
     private final StringRedisTemplate redisTemplate;
     private final RecaptchaService recaptchaService;
     private final UserActivityAuditLogger userActivityAuditLogger;
+    private final AdminActionAuditLogger adminActionAuditLogger;
     private final GoogleTokenVerifierService googleTokenVerifierService;
 
     private final Map<String, Integer> loginFailureCounts = new ConcurrentHashMap<>();
@@ -71,6 +75,9 @@ public class UserService {
     @Transactional
     public String signup(SignupRequestDto dto) {
         String email = dto.getEmail() != null ? dto.getEmail().trim() : "";
+        String nickname = normalizeNickname(dto.getNickname());
+        String nicknameValidationMessage = validateNickname(nickname);
+        if (nicknameValidationMessage != null) return nicknameValidationMessage;
         if (email.isEmpty()) return "이메일을 입력해주세요.";
 
         if (!emailService.isVerified(email)) {
@@ -84,15 +91,15 @@ public class UserService {
         }
 
         if (existingUser != null && "QUIT".equalsIgnoreCase(existingUser.getStatus())) {
-            if (!dto.getNickname().equals(existingUser.getNickname())
-                    && userRepository.countByNickname(dto.getNickname()) > 0) {
+            if (!nickname.equals(existingUser.getNickname())
+                    && userRepository.countByNickname(nickname) > 0) {
                 return "이미 사용 중인 닉네임입니다.";
             }
 
             resetUserAssets(existingUser.getId());
 
             existingUser.setPasswordHash(passwordEncoder.encode(dto.getPassword()));
-            existingUser.setNickname(dto.getNickname());
+            existingUser.setNickname(nickname);
             existingUser.setRole("USER");
             existingUser.setStatus("REJOINED");
             existingUser.setMarketingConsent(dto.getMarketingConsent() != null && dto.getMarketingConsent());
@@ -110,7 +117,7 @@ public class UserService {
             return "재가입 완료";
         }
 
-        if (userRepository.countByNickname(dto.getNickname()) > 0) {
+        if (userRepository.countByNickname(nickname) > 0) {
             return "이미 사용 중인 닉네임입니다.";
         }
 
@@ -119,7 +126,7 @@ public class UserService {
         User user = User.builder()
                 .email(email)
                 .passwordHash(encodedPassword)
-                .nickname(dto.getNickname())
+                .nickname(nickname)
                 .profileImageUrl(null)
                 .role("USER")
                 .status("ACTIVE")
@@ -309,10 +316,8 @@ public class UserService {
             throw new RuntimeException("Google account email is missing.");
         }
 
-        String nickname = dto.getNickname() != null ? dto.getNickname().trim() : "";
-        if (nickname.isEmpty()) {
-            throw new RuntimeException("닉네임을 입력해 주세요.");
-        }
+        String nickname = normalizeNickname(dto.getNickname());
+        validateNicknameOrThrow(nickname);
 
         User existingUser = userRepository.findByEmail(email).orElse(null);
         if (existingUser != null && !"QUIT".equalsIgnoreCase(existingUser.getStatus())) {
@@ -366,8 +371,10 @@ public class UserService {
     }
 
     public String checkNickname(String nickname, String email) {
-        String cleanNickname = nickname != null ? nickname.trim() : "";
+        String cleanNickname = normalizeNickname(nickname);
         String cleanEmail = email != null ? email.trim() : "";
+        String nicknameValidationMessage = validateNickname(cleanNickname);
+        if (nicknameValidationMessage != null) return nicknameValidationMessage;
 
         if (cleanNickname.isEmpty()) {
             return "닉네임을 입력해주세요.";
@@ -475,7 +482,8 @@ public class UserService {
 
     public UserProfileResponseDto changeNickname(ChangeNicknameRequestDto dto) {
         String email = dto.getEmail() != null ? dto.getEmail().trim() : "";
-        String nickname = dto.getNickname() != null ? dto.getNickname().trim() : "";
+        String nickname = normalizeNickname(dto.getNickname());
+        validateNicknameOrThrow(nickname);
 
         if (email.isEmpty()) {
             throw new RuntimeException("회원 정보를 찾을 수 없습니다.");
@@ -556,12 +564,18 @@ public class UserService {
     }
 
     @Transactional
-    public UserProfileResponseDto updateAdminUser(Long userId, AdminUpdateUserRequestDto dto) {
+    public UserProfileResponseDto updateAdminUser(Long userId, AdminUpdateUserRequestDto dto, String adminEmail) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다."));
 
+        User admin = userRepository.findByEmail(adminEmail)
+                .orElseThrow(() -> new RuntimeException("?ъ슜?먮? 李얠쓣 ???놁뒿?덈떎."));
+
         releaseExpiredSuspension(user);
         String previousStatus = user.getStatus();
+        String previousRole = user.getRole();
+        String previousSuspensionReason = user.getSuspensionReason();
+        LocalDateTime previousSuspendedUntil = user.getSuspendedUntil();
 
         if (!"USER".equals(dto.getRole()) && !"ADMIN".equals(dto.getRole())) {
             throw new RuntimeException("권한 값이 올바르지 않습니다.");
@@ -579,6 +593,21 @@ public class UserService {
 
         User savedUser = userRepository.save(user);
         logSuspensionChange(savedUser, previousStatus, dto);
+        adminActionAuditLogger.log(
+                admin.getId(),
+                admin.getEmail(),
+                "USER_UPDATE",
+                "USER",
+                String.valueOf(savedUser.getId()),
+                "beforeRole=" + previousRole
+                        + "; afterRole=" + savedUser.getRole()
+                        + "; beforeStatus=" + previousStatus
+                        + "; afterStatus=" + savedUser.getStatus()
+                        + "; beforeSuspendedUntil=" + safeDateTime(previousSuspendedUntil)
+                        + "; afterSuspendedUntil=" + safeDateTime(savedUser.getSuspendedUntil())
+                        + "; beforeSuspensionReason=" + safeLogValue(previousSuspensionReason)
+                        + "; afterSuspensionReason=" + safeLogValue(savedUser.getSuspensionReason())
+        );
         return toUserProfile(savedUser);
     }
 
@@ -627,6 +656,29 @@ public class UserService {
         boolean hasSpecial = value.chars().anyMatch(ch -> !Character.isLetterOrDigit(ch));
 
         return hasLetter && hasDigit && hasSpecial;
+    }
+
+    private String normalizeNickname(String nickname) {
+        return nickname != null ? nickname.trim() : "";
+    }
+
+    private String validateNickname(String nickname) {
+        if (nickname == null || nickname.isEmpty()) {
+            return "닉네임을 입력해주세요.";
+        }
+
+        if (nickname.length() > MAX_NICKNAME_LENGTH || !nickname.matches(NICKNAME_PATTERN)) {
+            return NICKNAME_RULE_MESSAGE;
+        }
+
+        return null;
+    }
+
+    private void validateNicknameOrThrow(String nickname) {
+        String validationMessage = validateNickname(nickname);
+        if (validationMessage != null) {
+            throw new RuntimeException(validationMessage);
+        }
     }
 
     private LoginFailedException buildLoginFailedException(String normalizedEmail) {
@@ -863,6 +915,18 @@ public class UserService {
                     "type=MANUAL; nextStatus=" + dto.getStatus()
             );
         }
+    }
+
+    private String safeDateTime(LocalDateTime value) {
+        return value == null ? "-" : value.format(SUSPENSION_TIME_FORMAT);
+    }
+
+    private String safeLogValue(String value) {
+        if (value == null || value.isBlank()) {
+            return "-";
+        }
+        String normalized = value.replaceAll("\\s+", " ").trim();
+        return normalized.length() <= 120 ? normalized : normalized.substring(0, 120) + "...";
     }
 
     private Path getProfileDirectory() {

@@ -2,6 +2,7 @@ package org.team12.teamproject.controller;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -10,6 +11,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.team12.teamproject.dto.AdminUpdateUserRequestDto;
+import org.team12.teamproject.dto.AdminActionLogItemDto;
 import org.team12.teamproject.dto.AdminLoginLogItemDto;
 import org.team12.teamproject.dto.AdminReportItemDto;
 import org.team12.teamproject.dto.UserActivityItemDto;
@@ -49,6 +51,11 @@ public class AdminController {
         return ResponseEntity.ok(userActivityService.getLoginLogs());
     }
 
+    @GetMapping("/action-logs")
+    public ResponseEntity<List<AdminActionLogItemDto>> getActionLogs() {
+        return ResponseEntity.ok(userActivityService.getAdminActionLogs());
+    }
+
     @GetMapping("/reports")
     public ResponseEntity<List<AdminReportItemDto>> getReports() {
         return ResponseEntity.ok(adminReportService.getReports());
@@ -57,8 +64,9 @@ public class AdminController {
     @PatchMapping("/users/{userId}")
     public ResponseEntity<UserProfileResponseDto> updateUser(
             @PathVariable Long userId,
-            @RequestBody AdminUpdateUserRequestDto dto
+            @RequestBody AdminUpdateUserRequestDto dto,
+            Authentication authentication
     ) {
-        return ResponseEntity.ok(userService.updateAdminUser(userId, dto));
+        return ResponseEntity.ok(userService.updateAdminUser(userId, dto, authentication.getName()));
     }
 }
