@@ -623,42 +623,68 @@ public class CompetitionService {
 
         String sql = """
         SELECT
-            u.user_id,
-            u.nickname,
-            u.profile_image_url,
-            (a.cash_balance + NVL(h_agg.total_stock_eval, 0)) AS total_asset,
-            c.initial_seed_money,
-            CASE
-                WHEN c.initial_seed_money = 0 THEN 0
-                ELSE ROUND(
-                    ((a.cash_balance + NVL(h_agg.total_stock_eval, 0)) - c.initial_seed_money)
-                    / c.initial_seed_money * 100,
-                    2
-                )
-            END AS return_rate,
-            ((a.cash_balance + NVL(h_agg.total_stock_eval, 0)) - c.initial_seed_money) AS profit_amount
-        FROM competition_participants cp
-        JOIN users u ON cp.user_id = u.user_id
-        JOIN accounts a ON cp.account_id = a.account_id
-        JOIN competitions c ON cp.competition_id = c.competition_id
-        LEFT JOIN (
-            SELECT h.account_id, SUM(h.quantity * s.current_price) AS total_stock_eval
-            FROM holdings h
-            JOIN stock s ON h.stock_id = s.stock_id
-            GROUP BY h.account_id
-        ) h_agg ON a.account_id = h_agg.account_id
-        WHERE cp.competition_id = ?
-          AND cp.participation_status = 'JOINED'
-        ORDER BY return_rate DESC
+            RANK() OVER (
+                ORDER BY base.return_rate DESC,
+                         base.total_asset DESC,
+                         base.last_trade_at ASC
+            ) AS ranking_rank,
+            base.user_id,
+            base.nickname,
+            base.profile_image_url,
+            base.total_asset,
+            base.return_rate,
+            base.profit_amount
+        FROM (
+            SELECT
+                u.user_id,
+                u.nickname,
+                u.profile_image_url,
+                (a.cash_balance + NVL(h_agg.total_stock_eval, 0)) AS total_asset,
+                CASE
+                    WHEN c.initial_seed_money = 0 THEN 0
+                    ELSE ROUND(
+                        ((a.cash_balance + NVL(h_agg.total_stock_eval, 0)) - c.initial_seed_money)
+                        / c.initial_seed_money * 100,
+                        2
+                    )
+                END AS return_rate,
+                ((a.cash_balance + NVL(h_agg.total_stock_eval, 0)) - c.initial_seed_money) AS profit_amount,
+                t_agg.last_trade_at
+            FROM competition_participants cp
+            JOIN users u ON cp.user_id = u.user_id
+            JOIN accounts a ON cp.account_id = a.account_id
+            JOIN competitions c ON cp.competition_id = c.competition_id
+            JOIN (
+                SELECT account_id,
+                       MAX(ordered_at) AS last_trade_at
+                FROM orders
+                WHERE order_status = 'COMPLETED'
+                GROUP BY account_id
+            ) t_agg ON a.account_id = t_agg.account_id
+            LEFT JOIN (
+                SELECT h.account_id,
+                       SUM(h.quantity * s.current_price) AS total_stock_eval
+                FROM holdings h
+                JOIN stock s ON h.stock_id = s.stock_id
+                GROUP BY h.account_id
+            ) h_agg ON a.account_id = h_agg.account_id
+            WHERE cp.competition_id = ?
+              AND cp.participation_status = 'JOINED'
+        ) base
+        ORDER BY base.return_rate DESC,
+                 base.total_asset DESC,
+                 base.last_trade_at ASC
         """;
 
         return jdbcTemplate.query(
                 sql,
                 new Object[]{competitionId},
                 (rs, rowNum) -> new CompetitionRankingResponseDto(
+                        rs.getInt("ranking_rank"),
                         rs.getLong("user_id"),
                         rs.getString("nickname"),
                         rs.getString("profile_image_url"),
+                        rs.getBigDecimal("total_asset"),
                         rs.getBigDecimal("return_rate"),
                         rs.getBigDecimal("profit_amount")
                 )
