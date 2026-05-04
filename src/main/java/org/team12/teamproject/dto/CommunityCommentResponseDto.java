@@ -12,6 +12,8 @@ public class CommunityCommentResponseDto {
     private Long parentCommentId;
     private Long userId;
     private String nickname;
+    private Integer level;
+    private String levelIconUrl;
     private String content;
     private LocalDateTime createdAt;
 }

@@ -16,6 +16,8 @@ public class CommunityPostDetailResponseDto {
     private String stockName;
     private Long userId;
     private String nickname;
+    private Integer level;
+    private String levelIconUrl;
     private Boolean hasBoughtStock;
     private String title;
     private String content;

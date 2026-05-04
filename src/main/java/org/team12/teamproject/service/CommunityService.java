@@ -100,25 +100,7 @@ public class CommunityService {
         mergedPosts.addAll(stockPosts);
 
         return mergedPosts.stream()
-                .map(post -> CommunityPostResponseDto.builder()
-                        .postId(post.getId())
-                        .stockId(post.getStock() != null ? post.getStock().getId() : null)
-                        .stockCode(post.getStock() != null ? post.getStock().getStockCode() : null)
-                        .stockName(post.getStock() != null ? post.getStock().getStockName() : null)
-                        .userId(post.getUser().getId())
-                        .nickname(post.getUser().getNickname())
-                        .hasBoughtStock(
-                                post.getStock() != null &&
-                                        hasBoughtStock(post.getUser().getId(), post.getStock().getId())
-                        )
-                        .title(post.getTitle())
-                        .commentCount(post.getCommentCount())
-                        .viewCount(post.getViewCount())
-                        .likeCount(post.getLikeCount())
-                        .dislikeCount(post.getDislikeCount())
-                        .isNotice(post.getIsNotice())
-                        .createdAt(post.getCreatedAt())
-                        .build())
+                .map(this::toPostResponseDto)
                 .toList();
     }
 
@@ -129,22 +111,7 @@ public class CommunityService {
 
         return postRepository.findByBoardIdAndStatusOrderByCreatedAtDesc(noticeBoard.getId(), "NORMAL")
                 .stream()
-                .map(post -> CommunityPostResponseDto.builder()
-                        .postId(post.getId())
-                        .stockId(null)
-                        .stockCode(null)
-                        .stockName(null)
-                        .userId(post.getUser().getId())
-                        .nickname(post.getUser().getNickname())
-                        .hasBoughtStock(false)
-                        .title(post.getTitle())
-                        .commentCount(post.getCommentCount())
-                        .viewCount(post.getViewCount())
-                        .likeCount(post.getLikeCount())
-                        .dislikeCount(post.getDislikeCount())
-                        .isNotice(post.getIsNotice())
-                        .createdAt(post.getCreatedAt())
-                        .build())
+                .map(this::toPostResponseDto)
                 .toList();
     }
 
@@ -324,6 +291,8 @@ public class CommunityService {
                 .stockName(stock != null ? stock.getStockName() : null)
                 .userId(post.getUser().getId())
                 .nickname(post.getUser().getNickname())
+                .level(calculateCommunityLevel(post.getUser().getId()))
+                .levelIconUrl(getCommunityLevelIconUrl(calculateCommunityLevel(post.getUser().getId())))
                 .hasBoughtStock(stock != null && hasBoughtStock(post.getUser().getId(), stock.getId()))
                 .title(post.getTitle())
                 .content(post.getContent())
@@ -729,18 +698,7 @@ public class CommunityService {
                 .filter(post -> "NORMAL".equals(post.getStatus()))
                 .filter(post -> post.getBoard() != null && board.getId().equals(post.getBoard().getId()))
                 .distinct()
-                .map(post -> CommunityPostResponseDto.builder()
-                        .postId(post.getId())
-                        .userId(post.getUser().getId())
-                        .nickname(post.getUser().getNickname())
-                        .title(post.getTitle())
-                        .commentCount(post.getCommentCount())
-                        .viewCount(post.getViewCount())
-                        .likeCount(post.getLikeCount())
-                        .dislikeCount(post.getDislikeCount())
-                        .isNotice(post.getIsNotice())
-                        .createdAt(post.getCreatedAt())
-                        .build())
+                .map(this::toPostResponseDto)
                 .toList();
     }
 
@@ -764,26 +722,57 @@ public class CommunityService {
                 .filter(post -> post.getBoard() != null && board.getId().equals(post.getBoard().getId()))
                 .filter(post -> post.getStock() != null && stock.getId().equals(post.getStock().getId()))
                 .distinct()
-                .map(post -> CommunityPostResponseDto.builder()
-                        .postId(post.getId())
-                        .stockId(post.getStock() != null ? post.getStock().getId() : null)
-                        .stockCode(post.getStock() != null ? post.getStock().getStockCode() : null)
-                        .stockName(post.getStock() != null ? post.getStock().getStockName() : null)
-                        .userId(post.getUser().getId())
-                        .nickname(post.getUser().getNickname())
-                        .hasBoughtStock(
-                                post.getStock() != null &&
-                                        hasBoughtStock(post.getUser().getId(), post.getStock().getId())
-                        )
-                        .title(post.getTitle())
-                        .commentCount(post.getCommentCount())
-                        .viewCount(post.getViewCount())
-                        .likeCount(post.getLikeCount())
-                        .dislikeCount(post.getDislikeCount())
-                        .isNotice(post.getIsNotice())
-                        .createdAt(post.getCreatedAt())
-                        .build())
+                .map(this::toPostResponseDto)
                 .toList();
+    }
+
+
+    private CommunityPostResponseDto toPostResponseDto(Post post) {
+        User user = post.getUser();
+        Stock stock = post.getStock();
+        int communityLevel = calculateCommunityLevel(user.getId());
+
+        return CommunityPostResponseDto.builder()
+                .postId(post.getId())
+                .stockId(stock != null ? stock.getId() : null)
+                .stockCode(stock != null ? stock.getStockCode() : null)
+                .stockName(stock != null ? stock.getStockName() : null)
+                .userId(user.getId())
+                .nickname(user.getNickname())
+                .level(communityLevel)
+                .levelIconUrl(getCommunityLevelIconUrl(communityLevel))
+                .hasBoughtStock(stock != null && hasBoughtStock(user.getId(), stock.getId()))
+                .title(post.getTitle())
+                .commentCount(post.getCommentCount())
+                .viewCount(post.getViewCount())
+                .likeCount(post.getLikeCount())
+                .dislikeCount(post.getDislikeCount())
+                .isNotice(post.getIsNotice())
+                .createdAt(post.getCreatedAt())
+                .build();
+    }
+
+    private int calculateCommunityLevel(Long userId) {
+        long postCount = postRepository.countByUser_IdAndStatus(userId, "NORMAL");
+        long commentCount = commentRepository.countByUser_IdAndStatus(userId, "NORMAL");
+        long receivedLikeCount = postRepository.sumLikeCountByUserIdAndStatus(userId, "NORMAL");
+
+        int activityScore = (int) ((postCount * 5) + (commentCount * 2) + (receivedLikeCount * 10));
+
+        if (activityScore >= 1800) return 10;
+        if (activityScore >= 1200) return 9;
+        if (activityScore >= 800) return 8;
+        if (activityScore >= 500) return 7;
+        if (activityScore >= 300) return 6;
+        if (activityScore >= 180) return 5;
+        if (activityScore >= 100) return 4;
+        if (activityScore >= 50) return 3;
+        if (activityScore >= 20) return 2;
+        return 1;
+    }
+
+    private String getCommunityLevelIconUrl(int level) {
+        return "/assets/community-badges/level-" + level + ".png";
     }
 
     private CommunityCommentResponseDto toCommentResponseDto(Comment comment) {
@@ -796,6 +785,8 @@ public class CommunityService {
                 )
                 .userId(comment.getUser().getId())
                 .nickname(comment.getUser().getNickname())
+                .level(calculateCommunityLevel(comment.getUser().getId()))
+                .levelIconUrl(getCommunityLevelIconUrl(calculateCommunityLevel(comment.getUser().getId())))
                 .content(comment.getContent())
                 .createdAt(comment.getCreatedAt())
                 .build();
@@ -997,18 +988,7 @@ public class CommunityService {
 
         return postRepository.findByBoardIdAndStatusOrderByCreatedAtDesc(board.getId(), "NORMAL")
                 .stream()
-                .map(post -> CommunityPostResponseDto.builder()
-                        .postId(post.getId())
-                        .userId(post.getUser().getId())
-                        .nickname(post.getUser().getNickname())
-                        .title(post.getTitle())
-                        .commentCount(post.getCommentCount())
-                        .viewCount(post.getViewCount())
-                        .likeCount(post.getLikeCount())
-                        .dislikeCount(post.getDislikeCount())
-                        .isNotice(post.getIsNotice())
-                        .createdAt(post.getCreatedAt())
-                        .build())
+                .map(this::toPostResponseDto)
                 .toList();
     }
 
@@ -1020,18 +1000,7 @@ public class CommunityService {
         return postRepository.findByBoardIdAndStatusOrderByCreatedAtDesc(board.getId(), "NORMAL")
                 .stream()
                 .filter(Post::getIsNotice)
-                .map(post -> CommunityPostResponseDto.builder()
-                        .postId(post.getId())
-                        .userId(post.getUser().getId())
-                        .nickname(post.getUser().getNickname())
-                        .title(post.getTitle())
-                        .commentCount(post.getCommentCount())
-                        .viewCount(post.getViewCount())
-                        .likeCount(post.getLikeCount())
-                        .dislikeCount(post.getDislikeCount())
-                        .isNotice(post.getIsNotice())
-                        .createdAt(post.getCreatedAt())
-                        .build())
+                .map(this::toPostResponseDto)
                 .toList();
     }
 
