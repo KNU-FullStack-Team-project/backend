@@ -15,4 +15,6 @@ public interface CommentRepository extends JpaRepository<Comment, Long> {
     Optional<Comment> findByIdAndStatus(Long commentId, String status);
 
     List<Comment> findByUser_IdOrderByCreatedAtDesc(Long userId);
+
+    long countByUser_IdAndStatus(Long userId, String status);
 }

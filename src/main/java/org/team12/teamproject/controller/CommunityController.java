@@ -11,6 +11,7 @@ import org.team12.teamproject.dto.CommunityPostDetailResponseDto;
 import org.team12.teamproject.dto.CommunityPostResponseDto;
 import org.team12.teamproject.dto.CommunityPostUpdateRequestDto;
 import org.team12.teamproject.dto.CommunityReportRequestDto;
+import org.team12.teamproject.service.CommunityProfileService;
 import org.team12.teamproject.service.CommunityService;
 
 import java.util.List;
@@ -21,6 +22,20 @@ import java.util.List;
 public class CommunityController {
 
     private final CommunityService communityService;
+    private final CommunityProfileService communityProfileService;
+
+    @GetMapping("/users/{userId}/profile")
+    public ResponseEntity<?> getCommunityUserProfile(
+            @PathVariable Long userId
+    ) {
+        try {
+            return ResponseEntity.ok(
+                    communityProfileService.getCommunityUserProfile(userId)
+            );
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
 
     @GetMapping("/stocks/{symbol}/posts")
     public ResponseEntity<List<CommunityPostResponseDto>> getStockPosts(
@@ -109,6 +124,7 @@ public class CommunityController {
         boolean isAdmin = authentication != null
                 && authentication.getAuthorities().stream()
                 .anyMatch(auth -> "ROLE_ADMIN".equals(auth.getAuthority()));
+
         return ResponseEntity.ok(communityService.getPostDetail(postId, email, isAdmin));
     }
 
@@ -132,8 +148,7 @@ public class CommunityController {
                 return ResponseEntity.status(401).body("로그인이 필요합니다.");
             }
 
-            String email = authentication.getName();
-            communityService.likePost(postId, email);
+            communityService.likePost(postId, authentication.getName());
             return ResponseEntity.ok("추천이 반영되었습니다.");
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(e.getMessage());
@@ -142,16 +157,15 @@ public class CommunityController {
 
     @PostMapping("/posts/{postId}/dislike")
     public ResponseEntity<?> dislikePost(
-        @PathVariable Long postId,
-        Authentication authentication
+            @PathVariable Long postId,
+            Authentication authentication
     ) {
         try {
             if (authentication == null || authentication.getName() == null) {
                 return ResponseEntity.status(401).body("로그인이 필요합니다.");
             }
 
-            String email = authentication.getName();
-            communityService.dislikePost(postId, email);
+            communityService.dislikePost(postId, authentication.getName());
             return ResponseEntity.ok("비추천이 반영되었습니다.");
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(e.getMessage());
@@ -187,11 +201,10 @@ public class CommunityController {
                 return ResponseEntity.status(401).body("로그인이 필요합니다.");
             }
 
-            String email = authentication.getName();
             boolean isAdmin = authentication.getAuthorities().stream()
                     .anyMatch(auth -> "ROLE_ADMIN".equals(auth.getAuthority()));
 
-            communityService.updatePost(postId, request, email, isAdmin);
+            communityService.updatePost(postId, request, authentication.getName(), isAdmin);
             return ResponseEntity.ok("게시글이 수정되었습니다.");
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(e.getMessage());
@@ -208,11 +221,10 @@ public class CommunityController {
                 return ResponseEntity.status(401).body("로그인이 필요합니다.");
             }
 
-            String email = authentication.getName();
             boolean isAdmin = authentication.getAuthorities().stream()
                     .anyMatch(auth -> "ROLE_ADMIN".equals(auth.getAuthority()));
 
-            communityService.deletePost(postId, email, isAdmin);
+            communityService.deletePost(postId, authentication.getName(), isAdmin);
             return ResponseEntity.ok("게시글이 삭제되었습니다.");
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(e.getMessage());
@@ -220,7 +232,9 @@ public class CommunityController {
     }
 
     @GetMapping("/posts/{postId}/comments")
-    public ResponseEntity<List<CommunityCommentResponseDto>> getComments(@PathVariable Long postId) {
+    public ResponseEntity<List<CommunityCommentResponseDto>> getComments(
+            @PathVariable Long postId
+    ) {
         return ResponseEntity.ok(communityService.getComments(postId));
     }
 
@@ -235,8 +249,11 @@ public class CommunityController {
                 return ResponseEntity.status(401).body("로그인이 필요합니다.");
             }
 
-            String email = authentication.getName();
-            Long commentId = communityService.createComment(postId, request, email);
+            Long commentId = communityService.createComment(
+                    postId,
+                    request,
+                    authentication.getName()
+            );
             return ResponseEntity.ok(commentId);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(e.getMessage());
@@ -271,11 +288,10 @@ public class CommunityController {
                 return ResponseEntity.status(401).body("로그인이 필요합니다.");
             }
 
-            String email = authentication.getName();
             boolean isAdmin = authentication.getAuthorities().stream()
                     .anyMatch(auth -> "ROLE_ADMIN".equals(auth.getAuthority()));
 
-            communityService.deleteComment(commentId, email, isAdmin);
+            communityService.deleteComment(commentId, authentication.getName(), isAdmin);
             return ResponseEntity.ok("댓글이 삭제되었습니다.");
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(e.getMessage());

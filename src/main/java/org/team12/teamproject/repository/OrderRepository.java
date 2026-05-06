@@ -3,6 +3,7 @@ package org.team12.teamproject.repository;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+
 import org.team12.teamproject.entity.Order;
 
 import java.util.List;
@@ -32,4 +33,12 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
             @Param("orderSide") String orderSide,
             @Param("orderStatus") String orderStatus
     );
+
+    @Query("""
+        SELECT COUNT(o)
+        FROM Order o
+        WHERE o.account.user.id = :userId
+          AND o.orderStatus = 'COMPLETED'
+    """)
+    long countCompletedOrdersByUserId(@Param("userId") Long userId);
 }
