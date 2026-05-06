@@ -24,6 +24,12 @@ public class CommunityUserProfileResponseDto {
     private long reportCount;
     private long orderCount;
 
+    private long competitionParticipationCount;
+    private long competitionFirstCount;
+    private long competitionSecondCount;
+    private long competitionThirdCount;
+    private long competitionTop3Count;
+
     private int activityScore;
     private int communityLevel;
     private String levelName;

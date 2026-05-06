@@ -481,6 +481,75 @@ public class CompetitionService {
         throw new RuntimeException("삭제할 수 없는 대회입니다.");
     }
 
+
+    @Transactional
+    public void finalizeCompetitionResult(Long competitionId) {
+        Map<String, Object> competition = getCompetitionRow(competitionId);
+
+        String storedStatus = (String) competition.get("STATUS");
+        LocalDateTime startAt = toLocalDateTime((Timestamp) competition.get("START_AT"));
+        LocalDateTime endAt = toLocalDateTime((Timestamp) competition.get("END_AT"));
+        String displayStatus = resolveDisplayStatus(storedStatus, startAt, endAt);
+
+        if ("CANCELED".equalsIgnoreCase(displayStatus)) {
+            throw new RuntimeException("취소된 대회는 결과를 확정할 수 없습니다.");
+        }
+
+        if ("SCHEDULED".equalsIgnoreCase(displayStatus)) {
+            throw new RuntimeException("아직 시작되지 않은 대회는 결과를 확정할 수 없습니다.");
+        }
+
+        if ("ONGOING".equalsIgnoreCase(displayStatus)) {
+            throw new RuntimeException("진행중인 대회는 결과를 확정할 수 없습니다.");
+        }
+
+        Integer participantCount = getJoinedParticipantCount(competitionId);
+
+        if (participantCount == null || participantCount == 0) {
+            throw new RuntimeException("참가자가 없는 대회는 결과를 확정할 수 없습니다.");
+        }
+
+        jdbcTemplate.update(
+                """
+                UPDATE competition_participants
+                SET final_return_rate = NULL,
+                    final_rank = NULL
+                WHERE competition_id = ?
+                  AND participation_status = 'JOINED'
+                """,
+                competitionId
+        );
+
+        List<CompetitionRankingResponseDto> rankings = getCompetitionRanking(competitionId);
+
+        for (CompetitionRankingResponseDto ranking : rankings) {
+            jdbcTemplate.update(
+                    """
+                    UPDATE competition_participants
+                    SET final_return_rate = ?,
+                        final_rank = ?
+                    WHERE competition_id = ?
+                      AND user_id = ?
+                      AND participation_status = 'JOINED'
+                    """,
+                    ranking.getReturnRate(),
+                    ranking.getRank(),
+                    competitionId,
+                    ranking.getUserId()
+            );
+        }
+
+        jdbcTemplate.update(
+                """
+                UPDATE competitions
+                SET status = 'ENDED',
+                    updated_at = SYSTIMESTAMP
+                WHERE competition_id = ?
+                """,
+                competitionId
+        );
+    }
+
     private Map<String, Object> getCompetitionRow(Long competitionId) {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
                 """
