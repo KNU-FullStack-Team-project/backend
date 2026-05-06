@@ -9,5 +9,7 @@ public class AdminLoginLogItemDto {
     private String occurredAt;
     private String nickname;
     private String loginId;
+    private String actionType;
     private String actionLabel;
+    private String detail;
 }

@@ -48,7 +48,12 @@ public class AdminController {
 
     @GetMapping("/login-logs")
     public ResponseEntity<List<AdminLoginLogItemDto>> getLoginLogs() {
-        return ResponseEntity.ok(userActivityService.getLoginLogs());
+        return ResponseEntity.ok(userActivityService.getAccountLogs());
+    }
+
+    @GetMapping("/account-logs")
+    public ResponseEntity<List<AdminLoginLogItemDto>> getAccountLogs() {
+        return ResponseEntity.ok(userActivityService.getAccountLogs());
     }
 
     @GetMapping("/action-logs")

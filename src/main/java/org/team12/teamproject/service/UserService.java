@@ -113,6 +113,7 @@ public class UserService {
 
             createDefaultAccount(existingUser);
             emailService.clearVerification(dto.getEmail());
+            logAccountEvent(existingUser, "ACCOUNT_REJOIN", "provider=LOCAL");
 
             return "재가입 완료";
         }
@@ -139,6 +140,7 @@ public class UserService {
         userRepository.save(user);
         createDefaultAccount(user);
         emailService.clearVerification(dto.getEmail());
+        logAccountEvent(user, "ACCOUNT_SIGNUP", "provider=LOCAL");
 
         return "회원가입 완료";
     }
@@ -158,6 +160,10 @@ public class UserService {
 
     private void resetUserAssets(Long userId) {
         jdbcTemplate.update("DELETE FROM competition_participants WHERE user_id = ?", userId);
+        jdbcTemplate.update(
+                "DELETE FROM portfolio_snapshot WHERE account_id IN (SELECT account_id FROM accounts WHERE user_id = ?)",
+                userId
+        );
         jdbcTemplate.update(
                 "DELETE FROM orders WHERE account_id IN (SELECT account_id FROM accounts WHERE user_id = ?)",
                 userId
@@ -345,6 +351,7 @@ public class UserService {
             saveSocialProfileImage(existingUser, extractGooglePicture(payload));
             userRepository.save(existingUser);
             createDefaultAccount(existingUser);
+            logAccountEvent(existingUser, "ACCOUNT_REJOIN", "provider=GOOGLE");
 
             return buildLoginResponse(existingUser, "다시 돌아오신 것을 환영합니다.");
         }
@@ -354,6 +361,7 @@ public class UserService {
                 nickname,
                 dto.getMarketingConsent() != null && dto.getMarketingConsent()
         );
+        logAccountEvent(user, "ACCOUNT_SIGNUP", "provider=GOOGLE");
         return buildLoginResponse(user, "간편회원가입 및 로그인 성공");
     }
 
@@ -611,12 +619,29 @@ public class UserService {
         return toUserProfile(savedUser);
     }
 
+    @Transactional
     public String withdraw(WithdrawUserRequestDto dto) {
         String email = dto.getEmail() != null ? dto.getEmail().trim() : "";
+        String reason = dto.getReason() != null ? dto.getReason().trim() : "";
+
+        if (reason.isBlank()) {
+            throw new RuntimeException("회원 탈퇴 사유를 입력해 주세요.");
+        }
+
+        if (reason.length() > 500) {
+            throw new RuntimeException("회원 탈퇴 사유는 500자 이하로 입력해 주세요.");
+        }
+
+        if (!Boolean.TRUE.equals(dto.getDeletionAgreed())) {
+            throw new RuntimeException("계정 영구 삭제 및 익명화에 동의해야 회원탈퇴를 진행할 수 있습니다.");
+        }
+
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new RuntimeException("회원정보가 일치하지 않습니다."));
 
+        logAccountEvent(user, "ACCOUNT_WITHDRAW", "reason=" + sanitizeAuditDetail(reason));
         deleteProfileImage(user.getId());
+        resetUserAssets(user.getId());
 
         user.setProfileImageUrl(null);
         user.setNickname(generateWithdrawnNickname(user));
@@ -626,6 +651,25 @@ public class UserService {
         userRepository.save(user);
 
         return "회원 탈퇴가 완료되었습니다.";
+    }
+
+    private void logAccountEvent(User user, String action, String detail) {
+        userActivityAuditLogger.log(
+                user.getId(),
+                user.getEmail(),
+                action,
+                "USER",
+                String.valueOf(user.getId()),
+                detail
+        );
+    }
+
+    private String sanitizeAuditDetail(String value) {
+        if (value == null) {
+            return "-";
+        }
+
+        return value.replace("\r", " ").replace("\n", " ").trim();
     }
 
     private boolean isEmailInUseByActiveUser(String email) {
@@ -747,7 +791,7 @@ public class UserService {
     }
 
     private String generateWithdrawnNickname(User user) {
-        String base = "withdrawn_" + (user.getId() != null ? user.getId() : "user");
+        String base = "DeletedUser" + (user.getId() != null ? user.getId() : "user");
         String candidate = base;
         int suffix = 1;
 

@@ -71,16 +71,16 @@ public class UserActivityService {
     }
 
     @Transactional(readOnly = true)
-    public List<AdminLoginLogItemDto> getLoginLogs() {
+    public List<AdminLoginLogItemDto> getAccountLogs() {
         Map<Long, User> userMap = userRepository.findAll().stream()
                 .collect(Collectors.toMap(User::getId, Function.identity()));
 
         return readLogFiles()
                 .map(this::parseLine)
                 .flatMap(java.util.Optional::stream)
-                .filter(item -> "LOGIN".equals(item.action()) || "LOGOUT".equals(item.action()))
+                .filter(item -> isAccountLogAction(item.action()))
                 .sorted(Comparator.comparing(ParsedActivity::occurredAt).reversed())
-                .map(item -> toLoginLogDto(item, userMap))
+                .map(item -> toAccountLogDto(item, userMap))
                 .toList();
     }
 
@@ -199,7 +199,7 @@ public class UserActivityService {
                 .build();
     }
 
-    private AdminLoginLogItemDto toLoginLogDto(ParsedActivity activity, Map<Long, User> userMap) {
+    private AdminLoginLogItemDto toAccountLogDto(ParsedActivity activity, Map<Long, User> userMap) {
         User user = null;
         try {
             user = userMap.get(Long.parseLong(activity.userId()));
@@ -210,8 +210,56 @@ public class UserActivityService {
                 .occurredAt(activity.occurredAt().toString())
                 .nickname(user != null ? user.getNickname() : "-")
                 .loginId(activity.userEmail())
-                .actionLabel("LOGIN".equals(activity.action()) ? "로그인" : "로그아웃")
+                .actionType(activity.action())
+                .actionLabel(toAccountLogActionLabel(activity.action()))
+                .detail(toAccountLogDetailLabel(activity.action(), activity.detail()))
                 .build();
+    }
+
+    private boolean isAccountLogAction(String action) {
+        return "LOGIN".equals(action)
+                || "LOGOUT".equals(action)
+                || "ACCOUNT_SIGNUP".equals(action)
+                || "ACCOUNT_REJOIN".equals(action)
+                || "ACCOUNT_WITHDRAW".equals(action);
+    }
+
+    private String toAccountLogActionLabel(String action) {
+        return switch (action) {
+            case "LOGIN" -> "로그인";
+            case "LOGOUT" -> "로그아웃";
+            case "ACCOUNT_SIGNUP" -> "신규회원가입";
+            case "ACCOUNT_REJOIN" -> "재가입";
+            case "ACCOUNT_WITHDRAW" -> "계정탈퇴";
+            default -> action;
+        };
+    }
+
+    private String toAccountLogDetailLabel(String action, String detail) {
+        if (detail == null || detail.isBlank() || "-".equals(detail)) {
+            return "-";
+        }
+
+        if ("ACCOUNT_WITHDRAW".equals(action)) {
+            Map<String, String> values = parseKeyValueDetail(detail, "; ");
+            return "사유 " + values.getOrDefault("reason", "-");
+        }
+
+        if ("ACCOUNT_SIGNUP".equals(action) || "ACCOUNT_REJOIN".equals(action)) {
+            Map<String, String> values = parseKeyValueDetail(detail, "; ");
+            String provider = values.getOrDefault("provider", "LOCAL");
+            return "가입 방식 " + ("GOOGLE".equals(provider) ? "구글" : "일반");
+        }
+
+        if ("LOGIN".equals(action) && detail.startsWith("role=")) {
+            return "권한 " + detail.substring("role=".length());
+        }
+
+        if ("LOGOUT".equals(action)) {
+            return "클라이언트 로그아웃";
+        }
+
+        return detail;
     }
 
     private AdminActionLogItemDto toAdminActionLogDto(ParsedAdminAction action, Map<Long, User> userMap) {
@@ -415,10 +463,7 @@ public class UserActivityService {
     }
 
     private String toAccountResetDetailLabel(String detail) {
-        Map<String, String> values = Stream.of(detail.split(", "))
-                .map(part -> part.split("=", 2))
-                .filter(parts -> parts.length == 2)
-                .collect(Collectors.toMap(parts -> parts[0], parts -> parts[1], (left, right) -> left));
+        Map<String, String> values = parseKeyValueDetail(detail, ", ");
 
         String accountName = values.getOrDefault("accountName", "기본 계좌");
         String cashBalance = values.getOrDefault("cashBalance", "5000000");
@@ -426,10 +471,7 @@ public class UserActivityService {
     }
 
     private String toSuspensionSetDetailLabel(String detail) {
-        Map<String, String> values = Stream.of(detail.split("; "))
-                .map(part -> part.split("=", 2))
-                .filter(parts -> parts.length == 2)
-                .collect(Collectors.toMap(parts -> parts[0], parts -> parts[1], (left, right) -> left));
+        Map<String, String> values = parseKeyValueDetail(detail, "; ");
 
         String hours = values.getOrDefault("hours", "-");
         String until = values.getOrDefault("until", "-");
@@ -441,10 +483,7 @@ public class UserActivityService {
     }
 
     private String toSuspensionReleaseDetailLabel(String detail) {
-        Map<String, String> values = Stream.of(detail.split("; "))
-                .map(part -> part.split("=", 2))
-                .filter(parts -> parts.length == 2)
-                .collect(Collectors.toMap(parts -> parts[0], parts -> parts[1], (left, right) -> left));
+        Map<String, String> values = parseKeyValueDetail(detail, "; ");
 
         String type = values.getOrDefault("type", "-");
         if ("AUTO".equals(type)) {
@@ -452,6 +491,13 @@ public class UserActivityService {
         }
         String nextStatus = values.getOrDefault("nextStatus", "ACTIVE");
         return "관리자 수동 해제 / 변경 상태 " + nextStatus;
+    }
+
+    private Map<String, String> parseKeyValueDetail(String detail, String delimiter) {
+        return Stream.of(detail.split(Pattern.quote(delimiter)))
+                .map(part -> part.split("=", 2))
+                .filter(parts -> parts.length == 2)
+                .collect(Collectors.toMap(parts -> parts[0], parts -> parts[1], (left, right) -> left));
     }
 
     private record ParsedActivity(
