@@ -47,10 +47,11 @@ public class CommunityProfileService {
         long profitHoldingCount = holdingRepository.countProfitHoldingsByUserId(userId);
         long highProfitHoldingCount = holdingRepository.countHighProfitHoldingsByUserId(userId);
 
-        long competitionParticipantBadgeCount = countEndedCompetitionParticipationByUserId(userId);
-        long competitionFirstBadgeCount = countCompetitionRankBadgeByUserId(userId, 1);
-        long competitionSecondBadgeCount = countCompetitionRankBadgeByUserId(userId, 2);
-        long competitionThirdBadgeCount = countCompetitionRankBadgeByUserId(userId, 3);
+        long competitionParticipationCount = countEndedCompetitionParticipationByUserId(userId);
+        long competitionFirstCount = countCompetitionRankByUserId(userId, 1);
+        long competitionSecondCount = countCompetitionRankByUserId(userId, 2);
+        long competitionThirdCount = countCompetitionRankByUserId(userId, 3);
+        long competitionTop3Count = competitionFirstCount + competitionSecondCount + competitionThirdCount;
 
         int activityScore = calculateActivityScore(postCount, commentCount, receivedLikeCount);
         int level = calculateLevel(activityScore);
@@ -64,10 +65,10 @@ public class CommunityProfileService {
                 receivedLikeCount,
                 commentCount,
                 orderCount,
-                competitionParticipantBadgeCount,
-                competitionFirstBadgeCount,
-                competitionSecondBadgeCount,
-                competitionThirdBadgeCount
+                competitionParticipationCount,
+                competitionFirstCount,
+                competitionSecondCount,
+                competitionThirdCount
         );
 
         return CommunityUserProfileResponseDto.builder()
@@ -83,6 +84,11 @@ public class CommunityProfileService {
                 .receivedLikeCount(receivedLikeCount)
                 .reportCount(reportCount)
                 .orderCount(orderCount)
+                .competitionParticipationCount(competitionParticipationCount)
+                .competitionFirstCount(competitionFirstCount)
+                .competitionSecondCount(competitionSecondCount)
+                .competitionThirdCount(competitionThirdCount)
+                .competitionTop3Count(competitionTop3Count)
                 .activityScore(activityScore)
                 .communityLevel(level)
                 .levelName(levelName)
@@ -139,10 +145,10 @@ public class CommunityProfileService {
             long receivedLikeCount,
             long commentCount,
             long orderCount,
-            long competitionParticipantBadgeCount,
-            long competitionFirstBadgeCount,
-            long competitionSecondBadgeCount,
-            long competitionThirdBadgeCount
+            long competitionParticipationCount,
+            long competitionFirstCount,
+            long competitionSecondCount,
+            long competitionThirdCount
     ) {
         List<CommunityBadgeResponseDto> badges = new ArrayList<>();
 
@@ -209,7 +215,7 @@ public class CommunityProfileService {
             ));
         }
 
-        if (competitionParticipantBadgeCount > 0) {
+        if (competitionParticipationCount > 0) {
             badges.add(competitionBadge(
                     "COMPETITION_PARTICIPANT",
                     "참가상",
@@ -218,7 +224,7 @@ public class CommunityProfileService {
             ));
         }
 
-        if (competitionFirstBadgeCount > 0) {
+        if (competitionFirstCount > 0) {
             badges.add(competitionBadge(
                     "COMPETITION_FIRST",
                     "대회 1등",
@@ -227,7 +233,7 @@ public class CommunityProfileService {
             ));
         }
 
-        if (competitionSecondBadgeCount > 0) {
+        if (competitionSecondCount > 0) {
             badges.add(competitionBadge(
                     "COMPETITION_SECOND",
                     "대회 2등",
@@ -236,7 +242,7 @@ public class CommunityProfileService {
             ));
         }
 
-        if (competitionThirdBadgeCount > 0) {
+        if (competitionThirdCount > 0) {
             badges.add(competitionBadge(
                     "COMPETITION_THIRD",
                     "대회 3등",
@@ -247,7 +253,6 @@ public class CommunityProfileService {
 
         return badges;
     }
-
 
     private long countEndedCompetitionParticipationByUserId(Long userId) {
         Long count = jdbcTemplate.queryForObject(
@@ -266,7 +271,7 @@ public class CommunityProfileService {
         return count != null ? count : 0;
     }
 
-    private long countCompetitionRankBadgeByUserId(Long userId, int rank) {
+    private long countCompetitionRankByUserId(Long userId, int rank) {
         Long count = jdbcTemplate.queryForObject(
                 """
                 SELECT COUNT(*)
