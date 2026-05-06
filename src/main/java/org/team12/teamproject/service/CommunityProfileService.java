@@ -2,6 +2,7 @@ package org.team12.teamproject.service;
 
 import lombok.RequiredArgsConstructor;
 
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,8 +27,10 @@ public class CommunityProfileService {
     private final CommentRepository commentRepository;
     private final HoldingRepository holdingRepository;
     private final OrderRepository orderRepository;
+    private final JdbcTemplate jdbcTemplate;
 
     private static final String BADGE_BASE_PATH = "/assets/community-badges/";
+    private static final String COMPETITION_BADGE_BASE_PATH = "/assets/community-badges/";
 
     @Transactional(readOnly = true)
     public CommunityUserProfileResponseDto getCommunityUserProfile(Long userId) {
@@ -44,6 +47,11 @@ public class CommunityProfileService {
         long profitHoldingCount = holdingRepository.countProfitHoldingsByUserId(userId);
         long highProfitHoldingCount = holdingRepository.countHighProfitHoldingsByUserId(userId);
 
+        long competitionParticipantBadgeCount = countEndedCompetitionParticipationByUserId(userId);
+        long competitionFirstBadgeCount = countCompetitionRankBadgeByUserId(userId, 1);
+        long competitionSecondBadgeCount = countCompetitionRankBadgeByUserId(userId, 2);
+        long competitionThirdBadgeCount = countCompetitionRankBadgeByUserId(userId, 3);
+
         int activityScore = calculateActivityScore(postCount, commentCount, receivedLikeCount);
         int level = calculateLevel(activityScore);
         String levelName = getLevelName(level);
@@ -55,7 +63,11 @@ public class CommunityProfileService {
                 highProfitHoldingCount,
                 receivedLikeCount,
                 commentCount,
-                orderCount
+                orderCount,
+                competitionParticipantBadgeCount,
+                competitionFirstBadgeCount,
+                competitionSecondBadgeCount,
+                competitionThirdBadgeCount
         );
 
         return CommunityUserProfileResponseDto.builder()
@@ -126,7 +138,11 @@ public class CommunityProfileService {
             long highProfitHoldingCount,
             long receivedLikeCount,
             long commentCount,
-            long orderCount
+            long orderCount,
+            long competitionParticipantBadgeCount,
+            long competitionFirstBadgeCount,
+            long competitionSecondBadgeCount,
+            long competitionThirdBadgeCount
     ) {
         List<CommunityBadgeResponseDto> badges = new ArrayList<>();
 
@@ -193,7 +209,94 @@ public class CommunityProfileService {
             ));
         }
 
+        if (competitionParticipantBadgeCount > 0) {
+            badges.add(competitionBadge(
+                    "COMPETITION_PARTICIPANT",
+                    "참가상",
+                    "종료된 대회에 참가한 기록이 있습니다.",
+                    "badge_participant.png"
+            ));
+        }
+
+        if (competitionFirstBadgeCount > 0) {
+            badges.add(competitionBadge(
+                    "COMPETITION_FIRST",
+                    "대회 1등",
+                    "종료된 대회에서 1등을 달성했습니다.",
+                    "badge_1st.png"
+            ));
+        }
+
+        if (competitionSecondBadgeCount > 0) {
+            badges.add(competitionBadge(
+                    "COMPETITION_SECOND",
+                    "대회 2등",
+                    "종료된 대회에서 2등을 달성했습니다.",
+                    "badge_2nd.png"
+            ));
+        }
+
+        if (competitionThirdBadgeCount > 0) {
+            badges.add(competitionBadge(
+                    "COMPETITION_THIRD",
+                    "대회 3등",
+                    "종료된 대회에서 3등을 달성했습니다.",
+                    "badge_3rd.png"
+            ));
+        }
+
         return badges;
+    }
+
+
+    private long countEndedCompetitionParticipationByUserId(Long userId) {
+        Long count = jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM competition_participants cp
+                JOIN competitions c ON cp.competition_id = c.competition_id
+                WHERE cp.user_id = ?
+                  AND cp.participation_status = 'JOINED'
+                  AND c.status = 'ENDED'
+                """,
+                Long.class,
+                userId
+        );
+
+        return count != null ? count : 0;
+    }
+
+    private long countCompetitionRankBadgeByUserId(Long userId, int rank) {
+        Long count = jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM competition_participants cp
+                JOIN competitions c ON cp.competition_id = c.competition_id
+                WHERE cp.user_id = ?
+                  AND cp.participation_status = 'JOINED'
+                  AND c.status = 'ENDED'
+                  AND cp.final_rank = ?
+                """,
+                Long.class,
+                userId,
+                rank
+        );
+
+        return count != null ? count : 0;
+    }
+
+    private CommunityBadgeResponseDto competitionBadge(
+            String code,
+            String label,
+            String description,
+            String fileName
+    ) {
+        return CommunityBadgeResponseDto.builder()
+                .code(code)
+                .label(label)
+                .description(description)
+                .imageUrl(COMPETITION_BADGE_BASE_PATH + fileName)
+                .build();
     }
 
     private CommunityBadgeResponseDto badge(
