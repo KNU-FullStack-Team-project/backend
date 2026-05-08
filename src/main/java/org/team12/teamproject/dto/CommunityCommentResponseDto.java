@@ -21,8 +21,5 @@ public class CommunityCommentResponseDto {
     private Boolean votedByCurrentUser;
     private String myVoteType;
     private LocalDateTime createdAt;
-<<<<<<< HEAD
     private List<CommunityCommentResponseDto> replies;
-=======
->>>>>>> df90c813e70d99b5af4821dcc99d783ac1690aed
 }
