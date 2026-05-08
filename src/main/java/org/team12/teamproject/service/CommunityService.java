@@ -14,25 +14,21 @@ import org.team12.teamproject.dto.CommunityPostUpdateRequestDto;
 import org.team12.teamproject.dto.CommunityReportRequestDto;
 import org.team12.teamproject.entity.Board;
 import org.team12.teamproject.entity.Comment;
-import org.team12.teamproject.entity.CommentReport;
-import org.team12.teamproject.entity.CommentVote;
 import org.team12.teamproject.entity.Post;
 import org.team12.teamproject.entity.PostAttachment;
-import org.team12.teamproject.entity.PostLike;
-import org.team12.teamproject.entity.PostReport;
+import org.team12.teamproject.entity.Report;
 import org.team12.teamproject.entity.Stock;
 import org.team12.teamproject.entity.User;
+import org.team12.teamproject.entity.Vote;
 import org.team12.teamproject.repository.BoardRepository;
-import org.team12.teamproject.repository.CommentReportRepository;
-import org.team12.teamproject.repository.CommentVoteRepository;
 import org.team12.teamproject.repository.CommentRepository;
 import org.team12.teamproject.repository.OrderRepository;
 import org.team12.teamproject.repository.PostAttachmentRepository;
-import org.team12.teamproject.repository.PostLikeRepository;
-import org.team12.teamproject.repository.PostReportRepository;
 import org.team12.teamproject.repository.PostRepository;
+import org.team12.teamproject.repository.ReportRepository;
 import org.team12.teamproject.repository.StockRepository;
 import org.team12.teamproject.repository.UserRepository;
+import org.team12.teamproject.repository.VoteRepository;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -60,12 +56,11 @@ public class CommunityService {
     private final StockRepository stockRepository;
     private final UserRepository userRepository;
     private final OrderRepository orderRepository;
-    private final PostLikeRepository postLikeRepository;
-    private final PostReportRepository postReportRepository;
-    private final CommentReportRepository commentReportRepository;
-    private final CommentVoteRepository commentVoteRepository;
+    private final VoteRepository voteRepository;
+    private final ReportRepository reportRepository;
     private final PostAttachmentRepository postAttachmentRepository;
     private final UserActivityAuditLogger userActivityAuditLogger;
+    private final AdminActionAuditLogger adminActionAuditLogger;
 
     private static final String STOCK_DISCUSSION_BOARD_CODE = "STOCK_DISCUSSION";
     private static final String FREE_BOARD_CODE = "FREE";
@@ -105,25 +100,7 @@ public class CommunityService {
         mergedPosts.addAll(stockPosts);
 
         return mergedPosts.stream()
-                .map(post -> CommunityPostResponseDto.builder()
-                        .postId(post.getId())
-                        .stockId(post.getStock() != null ? post.getStock().getId() : null)
-                        .stockCode(post.getStock() != null ? post.getStock().getStockCode() : null)
-                        .stockName(post.getStock() != null ? post.getStock().getStockName() : null)
-                        .userId(post.getUser().getId())
-                        .nickname(post.getUser().getNickname())
-                        .hasBoughtStock(
-                                post.getStock() != null &&
-                                        hasBoughtStock(post.getUser().getId(), post.getStock().getId())
-                        )
-                        .title(post.getTitle())
-                        .commentCount(post.getCommentCount())
-                        .viewCount(post.getViewCount())
-                        .likeCount(post.getLikeCount())
-                        .dislikeCount(post.getDislikeCount())
-                        .isNotice(post.getIsNotice())
-                        .createdAt(post.getCreatedAt())
-                        .build())
+                .map(this::toPostResponseDto)
                 .toList();
     }
 
@@ -134,22 +111,7 @@ public class CommunityService {
 
         return postRepository.findByBoardIdAndStatusOrderByCreatedAtDesc(noticeBoard.getId(), "NORMAL")
                 .stream()
-                .map(post -> CommunityPostResponseDto.builder()
-                        .postId(post.getId())
-                        .stockId(null)
-                        .stockCode(null)
-                        .stockName(null)
-                        .userId(post.getUser().getId())
-                        .nickname(post.getUser().getNickname())
-                        .hasBoughtStock(false)
-                        .title(post.getTitle())
-                        .commentCount(post.getCommentCount())
-                        .viewCount(post.getViewCount())
-                        .likeCount(post.getLikeCount())
-                        .dislikeCount(post.getDislikeCount())
-                        .isNotice(post.getIsNotice())
-                        .createdAt(post.getCreatedAt())
-                        .build())
+                .map(this::toPostResponseDto)
                 .toList();
     }
 
@@ -196,6 +158,16 @@ public class CommunityService {
                 "POST",
                 String.valueOf(savedPost.getId()),
                 "[GLOBAL_NOTICE] " + abbreviateForLog(savedPost.getTitle()) + " | " + abbreviateForLog(savedPost.getContent())
+        );
+        adminActionAuditLogger.log(
+                user.getId(),
+                user.getEmail(),
+                "NOTICE_CREATE",
+                "POST",
+                String.valueOf(savedPost.getId()),
+                "board=" + NOTICE_BOARD_CODE
+                        + "; title=" + abbreviateForLog(savedPost.getTitle())
+                        + "; content=" + abbreviateForLog(savedPost.getContent())
         );
 
         return savedPost.getId();
@@ -246,6 +218,18 @@ public class CommunityService {
                 String.valueOf(savedPost.getId()),
                 abbreviateForLog(savedPost.getTitle()) + " | " + abbreviateForLog(savedPost.getContent())
         );
+        if (isNotice) {
+            adminActionAuditLogger.log(
+                    user.getId(),
+                    user.getEmail(),
+                    "NOTICE_CREATE",
+                    "POST",
+                    String.valueOf(savedPost.getId()),
+                    "board=" + STOCK_DISCUSSION_BOARD_CODE
+                            + "; title=" + abbreviateForLog(savedPost.getTitle())
+                            + "; content=" + abbreviateForLog(savedPost.getContent())
+            );
+        }
 
         return savedPost.getId();
     }
@@ -287,14 +271,18 @@ public class CommunityService {
         String myVoteType = null;
 
         if (loginUser != null) {
-            PostLike myVote = postLikeRepository
-                    .findByPostIdAndUserId(postId, loginUser.getId())
+            Vote myVote = voteRepository
+                    .findByTargetTypeAndTargetIdAndUserId(
+                            Vote.TARGET_TYPE_POST,
+                            postId,
+                            loginUser.getId()
+                    )
                     .orElse(null);
 
             if (myVote != null) {
                 votedByCurrentUser = true;
                 myVoteType = myVote.getVoteType();
-                likedByCurrentUser = PostLike.VOTE_TYPE_LIKE.equals(myVote.getVoteType());
+                likedByCurrentUser = Vote.VOTE_TYPE_LIKE.equals(myVote.getVoteType());
             }
         }
 
@@ -305,6 +293,8 @@ public class CommunityService {
                 .stockName(stock != null ? stock.getStockName() : null)
                 .userId(post.getUser().getId())
                 .nickname(post.getUser().getNickname())
+                .level(calculateCommunityLevel(post.getUser().getId()))
+                .levelIconUrl(getCommunityLevelIconUrl(calculateCommunityLevel(post.getUser().getId())))
                 .hasBoughtStock(stock != null && hasBoughtStock(post.getUser().getId(), stock.getId()))
                 .title(post.getTitle())
                 .content(post.getContent())
@@ -312,6 +302,8 @@ public class CommunityService {
                 .likeCount(post.getLikeCount())
                 .dislikeCount(post.getDislikeCount())
                 .viewCount(post.getViewCount())
+                .status(post.getStatus())
+                .deletedAt(post.getDeletedAt())
                 .isNotice(post.getIsNotice())
                 .createdAt(post.getCreatedAt())
                 .likedByCurrentUser(likedByCurrentUser)
@@ -331,43 +323,15 @@ public class CommunityService {
 
     @Transactional
     public void likePost(Long postId, String email) {
-        Post post = postRepository.findByIdAndStatus(postId, "NORMAL")
-                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 게시글입니다."));
-
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 사용자입니다."));
-
-        if (post.getUser().getId().equals(user.getId())) {
-            throw new IllegalArgumentException("본인 글은 추천할 수 없습니다.");
-        }
-
-        boolean alreadyVoted = postLikeRepository.existsByPostIdAndUserId(postId, user.getId());
-        if (alreadyVoted) {
-            throw new IllegalArgumentException("이미 추천 또는 비추천한 게시글입니다.");
-        }
-
-        PostLike postLike = PostLike.builder()
-                .post(post)
-                .user(user)
-                .voteType(PostLike.VOTE_TYPE_LIKE)
-                .createdAt(LocalDateTime.now())
-                .build();
-
-        postLikeRepository.save(postLike);
-        post.increaseLikeCount();
-
-        userActivityAuditLogger.log(
-                user.getId(),
-                user.getEmail(),
-                "POST_LIKE",
-                "POST",
-                String.valueOf(post.getId()),
-                abbreviateForLog(post.getTitle())
-        );
+        votePost(postId, email, Vote.VOTE_TYPE_LIKE);
     }
 
     @Transactional
     public void dislikePost(Long postId, String email) {
+        votePost(postId, email, Vote.VOTE_TYPE_DISLIKE);
+    }
+
+    private void votePost(Long postId, String email, String voteType) {
         Post post = postRepository.findByIdAndStatus(postId, "NORMAL")
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 게시글입니다."));
 
@@ -375,28 +339,39 @@ public class CommunityService {
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 사용자입니다."));
 
         if (post.getUser().getId().equals(user.getId())) {
-            throw new IllegalArgumentException("본인 글은 비추천할 수 없습니다.");
+            throw new IllegalArgumentException("본인 글은 추천/비추천할 수 없습니다.");
         }
 
-        boolean alreadyVoted = postLikeRepository.existsByPostIdAndUserId(postId, user.getId());
+        boolean alreadyVoted = voteRepository.existsByTargetTypeAndTargetIdAndUserId(
+                Vote.TARGET_TYPE_POST,
+                postId,
+                user.getId()
+        );
+
         if (alreadyVoted) {
             throw new IllegalArgumentException("이미 추천 또는 비추천한 게시글입니다.");
         }
 
-        PostLike postLike = PostLike.builder()
-                .post(post)
+        Vote vote = Vote.builder()
+                .targetType(Vote.TARGET_TYPE_POST)
+                .targetId(postId)
                 .user(user)
-                .voteType(PostLike.VOTE_TYPE_DISLIKE)
+                .voteType(voteType)
                 .createdAt(LocalDateTime.now())
                 .build();
 
-        postLikeRepository.save(postLike);
-        post.increaseDislikeCount();
+        voteRepository.save(vote);
+
+        if (Vote.VOTE_TYPE_LIKE.equals(voteType)) {
+            post.increaseLikeCount();
+        } else {
+            post.increaseDislikeCount();
+        }
 
         userActivityAuditLogger.log(
                 user.getId(),
                 user.getEmail(),
-                "POST_DISLIKE",
+                Vote.VOTE_TYPE_LIKE.equals(voteType) ? "POST_LIKE" : "POST_DISLIKE",
                 "POST",
                 String.valueOf(post.getId()),
                 abbreviateForLog(post.getTitle())
@@ -425,7 +400,7 @@ public class CommunityService {
             }
 
             if (parentComment.getParentComment() != null) {
-                throw new IllegalArgumentException("답글에는 답글을 작성할 수 없습니다.");
+                throw new IllegalArgumentException("대댓글에는 답글을 작성할 수 없습니다.");
             }
         }
 
@@ -466,12 +441,12 @@ public class CommunityService {
 
     @Transactional
     public void likeComment(Long commentId, String email) {
-        voteComment(commentId, email, CommentVote.VOTE_TYPE_LIKE);
+        voteComment(commentId, email, Vote.VOTE_TYPE_LIKE);
     }
 
     @Transactional
     public void dislikeComment(Long commentId, String email) {
-        voteComment(commentId, email, CommentVote.VOTE_TYPE_DISLIKE);
+        voteComment(commentId, email, Vote.VOTE_TYPE_DISLIKE);
     }
 
     private void voteComment(Long commentId, String email, String voteType) {
@@ -485,23 +460,29 @@ public class CommunityService {
             throw new IllegalArgumentException("본인 댓글은 추천/비추천할 수 없습니다.");
         }
 
-        boolean alreadyVoted = commentVoteRepository.existsByCommentIdAndUserId(commentId, user.getId());
+        boolean alreadyVoted = voteRepository.existsByTargetTypeAndTargetIdAndUserId(
+                Vote.TARGET_TYPE_COMMENT,
+                commentId,
+                user.getId()
+        );
+
         if (alreadyVoted) {
             throw new IllegalArgumentException("이미 추천 또는 비추천한 댓글입니다.");
         }
 
-        CommentVote commentVote = CommentVote.builder()
-                .comment(comment)
+        Vote vote = Vote.builder()
+                .targetType(Vote.TARGET_TYPE_COMMENT)
+                .targetId(commentId)
                 .user(user)
                 .voteType(voteType)
                 .createdAt(LocalDateTime.now())
                 .build();
 
-        commentVoteRepository.save(commentVote);
+        voteRepository.save(vote);
 
-        if (CommentVote.VOTE_TYPE_LIKE.equals(voteType)) {
+        if (Vote.VOTE_TYPE_LIKE.equals(voteType)) {
             comment.increaseLikeCount();
-        } else if (CommentVote.VOTE_TYPE_DISLIKE.equals(voteType)) {
+        } else if (Vote.VOTE_TYPE_DISLIKE.equals(voteType)) {
             comment.increaseDislikeCount();
         } else {
             throw new IllegalArgumentException("올바르지 않은 투표 타입입니다.");
@@ -510,7 +491,7 @@ public class CommunityService {
         userActivityAuditLogger.log(
                 user.getId(),
                 user.getEmail(),
-                CommentVote.VOTE_TYPE_LIKE.equals(voteType) ? "COMMENT_LIKE" : "COMMENT_DISLIKE",
+                Vote.VOTE_TYPE_LIKE.equals(voteType) ? "COMMENT_LIKE" : "COMMENT_DISLIKE",
                 "COMMENT",
                 String.valueOf(comment.getId()),
                 abbreviateForLog(comment.getContent())
@@ -526,6 +507,10 @@ public class CommunityService {
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 사용자입니다."));
 
         boolean isOwner = post.getUser().getId().equals(loginUser.getId());
+        Long targetUserId = post.getUser().getId();
+        String beforeTitle = post.getTitle();
+        String beforeContent = post.getContent();
+        Boolean beforeIsNotice = post.getIsNotice();
 
         if (!isAdmin && !isOwner) {
             throw new IllegalArgumentException("본인 게시글만 수정할 수 있습니다.");
@@ -549,8 +534,32 @@ public class CommunityService {
                 "POST_UPDATE",
                 "POST",
                 String.valueOf(post.getId()),
-                abbreviateForLog(post.getTitle()) + " | " + abbreviateForLog(post.getContent())
+                "targetUserId=" + targetUserId
+                        + "; ownerAction=" + isOwner
+                        + "; beforeIsNotice=" + beforeIsNotice
+                        + "; afterIsNotice=" + post.getIsNotice()
+                        + "; beforeTitle=" + abbreviateForLog(beforeTitle)
+                        + "; beforeContent=" + abbreviateForLog(beforeContent)
+                        + "; afterTitle=" + abbreviateForLog(post.getTitle())
+                        + "; afterContent=" + abbreviateForLog(post.getContent())
         );
+        if (isAdmin) {
+            adminActionAuditLogger.log(
+                    loginUser.getId(),
+                    loginUser.getEmail(),
+                    "POST_UPDATE",
+                    "POST",
+                    String.valueOf(post.getId()),
+                    "targetUserId=" + targetUserId
+                            + "; ownerAction=" + isOwner
+                            + "; beforeIsNotice=" + beforeIsNotice
+                            + "; afterIsNotice=" + post.getIsNotice()
+                            + "; beforeTitle=" + abbreviateForLog(beforeTitle)
+                            + "; afterTitle=" + abbreviateForLog(post.getTitle())
+                            + "; beforeContent=" + abbreviateForLog(beforeContent)
+                            + "; afterContent=" + abbreviateForLog(post.getContent())
+            );
+        }
     }
 
     @Transactional
@@ -573,8 +582,26 @@ public class CommunityService {
                 "POST_DELETE",
                 "POST",
                 String.valueOf(post.getId()),
-                abbreviateForLog(post.getTitle()) + " | " + abbreviateForLog(post.getContent())
+                "targetUserId=" + post.getUser().getId()
+                        + "; ownerAction=" + isOwner
+                        + "; isNotice=" + post.getIsNotice()
+                        + "; title=" + abbreviateForLog(post.getTitle())
+                        + "; content=" + abbreviateForLog(post.getContent())
         );
+        if (isAdmin) {
+            adminActionAuditLogger.log(
+                    loginUser.getId(),
+                    loginUser.getEmail(),
+                    "POST_DELETE",
+                    "POST",
+                    String.valueOf(post.getId()),
+                    "targetUserId=" + post.getUser().getId()
+                            + "; ownerAction=" + isOwner
+                            + "; isNotice=" + post.getIsNotice()
+                            + "; title=" + abbreviateForLog(post.getTitle())
+                            + "; content=" + abbreviateForLog(post.getContent())
+            );
+        }
 
         post.softDelete();
     }
@@ -601,8 +628,24 @@ public class CommunityService {
                 "COMMENT_DELETE",
                 "COMMENT",
                 String.valueOf(comment.getId()),
-                abbreviateForLog(comment.getContent())
+                "targetUserId=" + comment.getUser().getId()
+                        + "; ownerAction=" + isOwner
+                        + "; postId=" + post.getId()
+                        + "; content=" + abbreviateForLog(comment.getContent())
         );
+        if (isAdmin) {
+            adminActionAuditLogger.log(
+                    loginUser.getId(),
+                    loginUser.getEmail(),
+                    "COMMENT_DELETE",
+                    "COMMENT",
+                    String.valueOf(comment.getId()),
+                    "targetUserId=" + comment.getUser().getId()
+                            + "; ownerAction=" + isOwner
+                            + "; postId=" + post.getId()
+                            + "; content=" + abbreviateForLog(comment.getContent())
+            );
+        }
 
         comment.softDelete();
         post.decreaseCommentCount();
@@ -622,13 +665,19 @@ public class CommunityService {
             throw new IllegalArgumentException("본인 게시글은 신고할 수 없습니다.");
         }
 
-        boolean alreadyReported = postReportRepository.existsByPostIdAndReporterUserId(postId, reporter.getId());
+        boolean alreadyReported = reportRepository.existsByTargetTypeAndTargetIdAndReporterUserId(
+                Report.TARGET_TYPE_POST,
+                postId,
+                reporter.getId()
+        );
+
         if (alreadyReported) {
             throw new IllegalArgumentException("이미 신고한 게시글입니다.");
         }
 
-        PostReport postReport = PostReport.builder()
-                .post(post)
+        Report report = Report.builder()
+                .targetType(Report.TARGET_TYPE_POST)
+                .targetId(postId)
                 .reporterUser(reporter)
                 .reason(request.getReason().trim())
                 .detail(normalizeDetail(request.getDetail()))
@@ -636,7 +685,7 @@ public class CommunityService {
                 .createdAt(LocalDateTime.now())
                 .build();
 
-        postReportRepository.save(postReport);
+        reportRepository.save(report);
         post.increaseReportCount();
 
         userActivityAuditLogger.log(
@@ -663,13 +712,19 @@ public class CommunityService {
             throw new IllegalArgumentException("본인 댓글은 신고할 수 없습니다.");
         }
 
-        boolean alreadyReported = commentReportRepository.existsByCommentIdAndReporterUserId(commentId, reporter.getId());
+        boolean alreadyReported = reportRepository.existsByTargetTypeAndTargetIdAndReporterUserId(
+                Report.TARGET_TYPE_COMMENT,
+                commentId,
+                reporter.getId()
+        );
+
         if (alreadyReported) {
             throw new IllegalArgumentException("이미 신고한 댓글입니다.");
         }
 
-        CommentReport commentReport = CommentReport.builder()
-                .comment(comment)
+        Report report = Report.builder()
+                .targetType(Report.TARGET_TYPE_COMMENT)
+                .targetId(commentId)
                 .reporterUser(reporter)
                 .reason(request.getReason().trim())
                 .detail(normalizeDetail(request.getDetail()))
@@ -677,7 +732,7 @@ public class CommunityService {
                 .createdAt(LocalDateTime.now())
                 .build();
 
-        commentReportRepository.save(commentReport);
+        reportRepository.save(report);
 
         userActivityAuditLogger.log(
                 reporter.getId(),
@@ -705,18 +760,7 @@ public class CommunityService {
                 .filter(post -> "NORMAL".equals(post.getStatus()))
                 .filter(post -> post.getBoard() != null && board.getId().equals(post.getBoard().getId()))
                 .distinct()
-                .map(post -> CommunityPostResponseDto.builder()
-                        .postId(post.getId())
-                        .userId(post.getUser().getId())
-                        .nickname(post.getUser().getNickname())
-                        .title(post.getTitle())
-                        .commentCount(post.getCommentCount())
-                        .viewCount(post.getViewCount())
-                        .likeCount(post.getLikeCount())
-                        .dislikeCount(post.getDislikeCount())
-                        .isNotice(post.getIsNotice())
-                        .createdAt(post.getCreatedAt())
-                        .build())
+                .map(this::toPostResponseDto)
                 .toList();
     }
 
@@ -740,25 +784,7 @@ public class CommunityService {
                 .filter(post -> post.getBoard() != null && board.getId().equals(post.getBoard().getId()))
                 .filter(post -> post.getStock() != null && stock.getId().equals(post.getStock().getId()))
                 .distinct()
-                .map(post -> CommunityPostResponseDto.builder()
-                        .postId(post.getId())
-                        .stockId(post.getStock() != null ? post.getStock().getId() : null)
-                        .stockCode(post.getStock() != null ? post.getStock().getStockCode() : null)
-                        .stockName(post.getStock() != null ? post.getStock().getStockName() : null)
-                        .userId(post.getUser().getId())
-                        .nickname(post.getUser().getNickname())
-                        .hasBoughtStock(
-                                post.getStock() != null &&
-                                        hasBoughtStock(post.getUser().getId(), post.getStock().getId())
-                        )
-                        .title(post.getTitle())
-                        .commentCount(post.getCommentCount())
-                        .viewCount(post.getViewCount())
-                        .likeCount(post.getLikeCount())
-                        .dislikeCount(post.getDislikeCount())
-                        .isNotice(post.getIsNotice())
-                        .createdAt(post.getCreatedAt())
-                        .build())
+                .map(this::toPostResponseDto)
                 .toList();
     }
 
@@ -780,6 +806,54 @@ public class CommunityService {
         return rootComments;
     }
 
+    private CommunityPostResponseDto toPostResponseDto(Post post) {
+        User user = post.getUser();
+        Stock stock = post.getStock();
+        int communityLevel = calculateCommunityLevel(user.getId());
+
+        return CommunityPostResponseDto.builder()
+                .postId(post.getId())
+                .stockId(stock != null ? stock.getId() : null)
+                .stockCode(stock != null ? stock.getStockCode() : null)
+                .stockName(stock != null ? stock.getStockName() : null)
+                .userId(user.getId())
+                .nickname(user.getNickname())
+                .level(communityLevel)
+                .levelIconUrl(getCommunityLevelIconUrl(communityLevel))
+                .hasBoughtStock(stock != null && hasBoughtStock(user.getId(), stock.getId()))
+                .title(post.getTitle())
+                .commentCount(post.getCommentCount())
+                .viewCount(post.getViewCount())
+                .likeCount(post.getLikeCount())
+                .dislikeCount(post.getDislikeCount())
+                .isNotice(post.getIsNotice())
+                .createdAt(post.getCreatedAt())
+                .build();
+    }
+
+    private int calculateCommunityLevel(Long userId) {
+        long postCount = postRepository.countByUser_IdAndStatus(userId, "NORMAL");
+        long commentCount = commentRepository.countByUser_IdAndStatus(userId, "NORMAL");
+        long receivedLikeCount = postRepository.sumLikeCountByUserIdAndStatus(userId, "NORMAL");
+
+        int activityScore = (int) ((postCount * 5) + (commentCount * 2) + (receivedLikeCount * 10));
+
+        if (activityScore >= 1800) return 10;
+        if (activityScore >= 1200) return 9;
+        if (activityScore >= 800) return 8;
+        if (activityScore >= 500) return 7;
+        if (activityScore >= 300) return 6;
+        if (activityScore >= 180) return 5;
+        if (activityScore >= 100) return 4;
+        if (activityScore >= 50) return 3;
+        if (activityScore >= 20) return 2;
+        return 1;
+    }
+
+    private String getCommunityLevelIconUrl(int level) {
+        return "/assets/community-badges/level-" + level + ".png";
+    }
+
     private CommunityCommentResponseDto toCommentResponseDto(
             Comment comment,
             Long loginUserId,
@@ -789,8 +863,12 @@ public class CommunityService {
         boolean votedByCurrentUser = false;
 
         if (loginUserId != null) {
-            CommentVote myVote = commentVoteRepository
-                    .findByCommentIdAndUserId(comment.getId(), loginUserId)
+            Vote myVote = voteRepository
+                    .findByTargetTypeAndTargetIdAndUserId(
+                            Vote.TARGET_TYPE_COMMENT,
+                            comment.getId(),
+                            loginUserId
+                    )
                     .orElse(null);
 
             if (myVote != null) {
@@ -799,11 +877,15 @@ public class CommunityService {
             }
         }
 
+        int communityLevel = calculateCommunityLevel(comment.getUser().getId());
+
         return CommunityCommentResponseDto.builder()
                 .commentId(comment.getId())
                 .parentCommentId(comment.getParentComment() != null ? comment.getParentComment().getId() : null)
                 .userId(comment.getUser().getId())
                 .nickname(comment.getUser().getNickname())
+                .level(communityLevel)
+                .levelIconUrl(getCommunityLevelIconUrl(communityLevel))
                 .content(comment.getContent())
                 .likeCount(comment.getLikeCount())
                 .dislikeCount(comment.getDislikeCount())
@@ -929,7 +1011,7 @@ public class CommunityService {
                     deleteEx.printStackTrace();
                 }
 
-                String newUrl = "/uploads/" + subDir.replace("\\", "/") + "/" + newName;
+                String newUrl = "/api/uploads/" + subDir.replace("\\", "/") + "/" + newName;
                 file.updateFileInfo(newName, newUrl, post);
 
                 System.out.println("=== finalizeTempAttachments success ===");
@@ -950,7 +1032,7 @@ public class CommunityService {
     }
 
     private String extractSubDir(String fileUrl) {
-        String path = fileUrl.replace("/uploads/", "");
+        String path = fileUrl.replace("/api/uploads/", "").replace("/uploads/", "");
         int lastSlashIndex = path.lastIndexOf("/");
         if (lastSlashIndex < 0) {
             throw new IllegalArgumentException("잘못된 파일 경로입니다.");
@@ -992,14 +1074,15 @@ public class CommunityService {
 
         String normalized = value.replaceAll("<[^>]*>", " ")
                 .replaceAll("&nbsp;", " ")
+                .replace(";", ",")
                 .replaceAll("\\s+", " ")
                 .trim();
 
-        if (normalized.length() <= 60) {
+        if (normalized.length() <= 500) {
             return normalized;
         }
 
-        return normalized.substring(0, 60) + "...";
+        return normalized.substring(0, 500) + "...";
     }
 
     @Transactional(readOnly = true)
@@ -1009,18 +1092,7 @@ public class CommunityService {
 
         return postRepository.findByBoardIdAndStatusOrderByCreatedAtDesc(board.getId(), "NORMAL")
                 .stream()
-                .map(post -> CommunityPostResponseDto.builder()
-                        .postId(post.getId())
-                        .userId(post.getUser().getId())
-                        .nickname(post.getUser().getNickname())
-                        .title(post.getTitle())
-                        .commentCount(post.getCommentCount())
-                        .viewCount(post.getViewCount())
-                        .likeCount(post.getLikeCount())
-                        .dislikeCount(post.getDislikeCount())
-                        .isNotice(post.getIsNotice())
-                        .createdAt(post.getCreatedAt())
-                        .build())
+                .map(this::toPostResponseDto)
                 .toList();
     }
 
@@ -1032,18 +1104,7 @@ public class CommunityService {
         return postRepository.findByBoardIdAndStatusOrderByCreatedAtDesc(board.getId(), "NORMAL")
                 .stream()
                 .filter(Post::getIsNotice)
-                .map(post -> CommunityPostResponseDto.builder()
-                        .postId(post.getId())
-                        .userId(post.getUser().getId())
-                        .nickname(post.getUser().getNickname())
-                        .title(post.getTitle())
-                        .commentCount(post.getCommentCount())
-                        .viewCount(post.getViewCount())
-                        .likeCount(post.getLikeCount())
-                        .dislikeCount(post.getDislikeCount())
-                        .isNotice(post.getIsNotice())
-                        .createdAt(post.getCreatedAt())
-                        .build())
+                .map(this::toPostResponseDto)
                 .toList();
     }
 
@@ -1089,6 +1150,18 @@ public class CommunityService {
                 String.valueOf(savedPost.getId()),
                 abbreviateForLog(savedPost.getTitle()) + " | " + abbreviateForLog(savedPost.getContent())
         );
+        if (isNotice) {
+            adminActionAuditLogger.log(
+                    user.getId(),
+                    user.getEmail(),
+                    "NOTICE_CREATE",
+                    "POST",
+                    String.valueOf(savedPost.getId()),
+                    "board=" + FREE_BOARD_CODE
+                            + "; title=" + abbreviateForLog(savedPost.getTitle())
+                            + "; content=" + abbreviateForLog(savedPost.getContent())
+            );
+        }
 
         return savedPost.getId();
     }

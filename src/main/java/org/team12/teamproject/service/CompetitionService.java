@@ -38,20 +38,12 @@ public class CompetitionService {
                        c.initial_seed_money,
                        c.max_participants,
                        c.is_public,
-                       COUNT(CASE WHEN cp.participation_status = 'JOINED' THEN 1 END) AS participant_count
+                       (SELECT COUNT(*) 
+                        FROM competition_participants cp 
+                        WHERE cp.competition_id = c.competition_id 
+                          AND cp.participation_status = 'JOINED') AS participant_count
                 FROM competitions c
-                LEFT JOIN competition_participants cp
-                  ON c.competition_id = cp.competition_id
                 WHERE (? = 1 OR c.is_public = 1)
-                GROUP BY c.competition_id,
-                         c.title,
-                         c.description,
-                         c.status,
-                         c.start_at,
-                         c.end_at,
-                         c.initial_seed_money,
-                         c.max_participants,
-                         c.is_public
                 ORDER BY c.competition_id DESC
                 """;
 
@@ -87,21 +79,13 @@ public class CompetitionService {
                        c.initial_seed_money,
                        c.max_participants,
                        c.is_public,
-                       COUNT(CASE WHEN cp.participation_status = 'JOINED' THEN 1 END) AS participant_count
+                       (SELECT COUNT(*) 
+                        FROM competition_participants cp 
+                        WHERE cp.competition_id = c.competition_id 
+                          AND cp.participation_status = 'JOINED') AS participant_count
                 FROM competitions c
-                LEFT JOIN competition_participants cp
-                  ON c.competition_id = cp.competition_id
                 WHERE c.competition_id = ?
                   AND (? = 1 OR c.is_public = 1)
-                GROUP BY c.competition_id,
-                         c.title,
-                         c.description,
-                         c.status,
-                         c.start_at,
-                         c.end_at,
-                         c.initial_seed_money,
-                         c.max_participants,
-                         c.is_public
                 """;
 
         List<CompetitionDetailResponseDto> result = jdbcTemplate.query(
@@ -152,6 +136,7 @@ public class CompetitionService {
         String competitionSql = """
                 SELECT title,
                        initial_seed_money,
+                       max_participants,
                        is_public,
                        CASE
                            WHEN status = 'CANCELED' THEN 'CANCELED'
@@ -173,6 +158,9 @@ public class CompetitionService {
 
         String title = (String) competition.get("TITLE");
         BigDecimal initialSeedMoney = (BigDecimal) competition.get("INITIAL_SEED_MONEY");
+        Integer maxParticipants = competition.get("MAX_PARTICIPANTS") == null
+                ? null
+                : ((Number) competition.get("MAX_PARTICIPANTS")).intValue();
         String status = (String) competition.get("DISPLAY_STATUS");
         Integer isPublic = competition.get("IS_PUBLIC") == null
                 ? 1
@@ -192,6 +180,14 @@ public class CompetitionService {
 
         if ("ENDED".equalsIgnoreCase(status)) {
             throw new RuntimeException("종료된 대회에는 참가할 수 없습니다.");
+        }
+
+        if (maxParticipants != null) {
+            Integer joinedCount = getJoinedParticipantCount(competitionId);
+
+            if (joinedCount != null && joinedCount >= maxParticipants) {
+                throw new RuntimeException("대회 최대 참가 인원이 마감되었습니다.");
+            }
         }
 
         Long accountId = jdbcTemplate.queryForObject(
@@ -497,6 +493,75 @@ public class CompetitionService {
         throw new RuntimeException("삭제할 수 없는 대회입니다.");
     }
 
+
+    @Transactional
+    public void finalizeCompetitionResult(Long competitionId) {
+        Map<String, Object> competition = getCompetitionRow(competitionId);
+
+        String storedStatus = (String) competition.get("STATUS");
+        LocalDateTime startAt = toLocalDateTime((Timestamp) competition.get("START_AT"));
+        LocalDateTime endAt = toLocalDateTime((Timestamp) competition.get("END_AT"));
+        String displayStatus = resolveDisplayStatus(storedStatus, startAt, endAt);
+
+        if ("CANCELED".equalsIgnoreCase(displayStatus)) {
+            throw new RuntimeException("취소된 대회는 결과를 확정할 수 없습니다.");
+        }
+
+        if ("SCHEDULED".equalsIgnoreCase(displayStatus)) {
+            throw new RuntimeException("아직 시작되지 않은 대회는 결과를 확정할 수 없습니다.");
+        }
+
+        if ("ONGOING".equalsIgnoreCase(displayStatus)) {
+            throw new RuntimeException("진행중인 대회는 결과를 확정할 수 없습니다.");
+        }
+
+        Integer participantCount = getJoinedParticipantCount(competitionId);
+
+        if (participantCount == null || participantCount == 0) {
+            throw new RuntimeException("참가자가 없는 대회는 결과를 확정할 수 없습니다.");
+        }
+
+        jdbcTemplate.update(
+                """
+                UPDATE competition_participants
+                SET final_return_rate = NULL,
+                    final_rank = NULL
+                WHERE competition_id = ?
+                  AND participation_status = 'JOINED'
+                """,
+                competitionId
+        );
+
+        List<CompetitionRankingResponseDto> rankings = getCompetitionRanking(competitionId);
+
+        for (CompetitionRankingResponseDto ranking : rankings) {
+            jdbcTemplate.update(
+                    """
+                    UPDATE competition_participants
+                    SET final_return_rate = ?,
+                        final_rank = ?
+                    WHERE competition_id = ?
+                      AND user_id = ?
+                      AND participation_status = 'JOINED'
+                    """,
+                    ranking.getReturnRate(),
+                    ranking.getRank(),
+                    competitionId,
+                    ranking.getUserId()
+            );
+        }
+
+        jdbcTemplate.update(
+                """
+                UPDATE competitions
+                SET status = 'ENDED',
+                    updated_at = SYSTIMESTAMP
+                WHERE competition_id = ?
+                """,
+                competitionId
+        );
+    }
+
     private Map<String, Object> getCompetitionRow(Long competitionId) {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
                 """
@@ -639,42 +704,68 @@ public class CompetitionService {
 
         String sql = """
         SELECT
-            u.user_id,
-            u.nickname,
-            u.profile_image_url,
-            (a.cash_balance + NVL(h_agg.total_stock_eval, 0)) AS total_asset,
-            c.initial_seed_money,
-            CASE
-                WHEN c.initial_seed_money = 0 THEN 0
-                ELSE ROUND(
-                    ((a.cash_balance + NVL(h_agg.total_stock_eval, 0)) - c.initial_seed_money)
-                    / c.initial_seed_money * 100,
-                    2
-                )
-            END AS return_rate,
-            ((a.cash_balance + NVL(h_agg.total_stock_eval, 0)) - c.initial_seed_money) AS profit_amount
-        FROM competition_participants cp
-        JOIN users u ON cp.user_id = u.user_id
-        JOIN accounts a ON cp.account_id = a.account_id
-        JOIN competitions c ON cp.competition_id = c.competition_id
-        LEFT JOIN (
-            SELECT h.account_id, SUM(h.quantity * s.current_price) AS total_stock_eval
-            FROM holdings h
-            JOIN stock s ON h.stock_id = s.stock_id
-            GROUP BY h.account_id
-        ) h_agg ON a.account_id = h_agg.account_id
-        WHERE cp.competition_id = ?
-          AND cp.participation_status = 'JOINED'
-        ORDER BY return_rate DESC
+            RANK() OVER (
+                ORDER BY base.return_rate DESC,
+                         base.total_asset DESC,
+                         base.last_trade_at ASC
+            ) AS ranking_rank,
+            base.user_id,
+            base.nickname,
+            base.profile_image_url,
+            base.total_asset,
+            base.return_rate,
+            base.profit_amount
+        FROM (
+            SELECT
+                u.user_id,
+                u.nickname,
+                u.profile_image_url,
+                (a.cash_balance + NVL(h_agg.total_stock_eval, 0)) AS total_asset,
+                CASE
+                    WHEN c.initial_seed_money = 0 THEN 0
+                    ELSE ROUND(
+                        ((a.cash_balance + NVL(h_agg.total_stock_eval, 0)) - c.initial_seed_money)
+                        / c.initial_seed_money * 100,
+                        2
+                    )
+                END AS return_rate,
+                ((a.cash_balance + NVL(h_agg.total_stock_eval, 0)) - c.initial_seed_money) AS profit_amount,
+                t_agg.last_trade_at
+            FROM competition_participants cp
+            JOIN users u ON cp.user_id = u.user_id
+            JOIN accounts a ON cp.account_id = a.account_id
+            JOIN competitions c ON cp.competition_id = c.competition_id
+            JOIN (
+                SELECT account_id,
+                       MAX(ordered_at) AS last_trade_at
+                FROM orders
+                WHERE order_status = 'COMPLETED'
+                GROUP BY account_id
+            ) t_agg ON a.account_id = t_agg.account_id
+            LEFT JOIN (
+                SELECT h.account_id,
+                       SUM(h.quantity * s.current_price) AS total_stock_eval
+                FROM holdings h
+                JOIN stock s ON h.stock_id = s.stock_id
+                GROUP BY h.account_id
+            ) h_agg ON a.account_id = h_agg.account_id
+            WHERE cp.competition_id = ?
+              AND cp.participation_status = 'JOINED'
+        ) base
+        ORDER BY base.return_rate DESC,
+                 base.total_asset DESC,
+                 base.last_trade_at ASC
         """;
 
         return jdbcTemplate.query(
                 sql,
                 new Object[]{competitionId},
                 (rs, rowNum) -> new CompetitionRankingResponseDto(
+                        rs.getInt("ranking_rank"),
                         rs.getLong("user_id"),
                         rs.getString("nickname"),
                         rs.getString("profile_image_url"),
+                        rs.getBigDecimal("total_asset"),
                         rs.getBigDecimal("return_rate"),
                         rs.getBigDecimal("profit_amount")
                 )

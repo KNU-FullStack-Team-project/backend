@@ -7,4 +7,6 @@ import lombok.Setter;
 @Setter
 public class WithdrawUserRequestDto {
     private String email;
+    private String reason;
+    private Boolean deletionAgreed;
 }

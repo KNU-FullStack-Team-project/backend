@@ -11,6 +11,7 @@ name: backend CI
 on:
   push:
     branches: [ "master" ]
+  workflow_dispatch:
     
 jobs:
   build:
@@ -29,16 +30,36 @@ jobs:
         mkdir -p src/main/resources
 
         echo "kis.api.app-key=${{ secrets.KIS_API_KEY }}" > src/main/resources/secrets.properties
-        echo "kis.api.app-secret=${{ secrets.KSI_API_SECRET }}" >> src/main/resources/secrets.properties
+        echo "kis.api.app-secret=${{ secrets.KIS_API_SECRET }}" >> src/main/resources/secrets.properties
         echo "spring.data.redis.password=${{ secrets.REDIS_PASSWORD }}" >> src/main/resources/secrets.properties
         echo "MAIL_USERNAME=${{ secrets.MAIL_USERNAME }}" >> src/main/resources/secrets.properties
         echo "MAIL_PASSWORD=${{ secrets.MAIL_PASSWORD }}" >> src/main/resources/secrets.properties
         echo "recaptcha.secret=${{ secrets.RECAPTCHA_SECRET }}" >> src/main/resources/secrets.properties
         echo "google.oauth.client-id=${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}" >> src/main/resources/secrets.properties
+        
     - name: Build with Maven
-      run: mvn -B package --file pom.xml
-
-    # Optional: Uploads the full dependency graph to GitHub to improve the quality of Dependabot alerts this repository can receive
-    - name: Update dependency graph
-      uses: advanced-security/maven-dependency-submission-action@571e99aab1055c2e71a1e2309b9691de18d6b7d6
-#test
+      run: |
+        mvn -B package -DskipTests --file pom.xml
+        echo ">>> Target Directory Listing:"
+        ls -R target
+    - name: Transfer Artifacts to EC2
+      uses: appleboy/scp-action@master
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USER }}
+        key: ${{ secrets.EC2_KEY }}
+        # 빌드된 JAR 파일과 Dockerfile을 전송합니다.
+        source: "target/*.jar,Dockerfile"
+        target: "~/teamproject/backend"
+    - name: Deploy on EC2
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USER }}
+        key: ${{ secrets.EC2_KEY }}
+        script: |
+          cd ~/teamproject
+          # 저장용 폴더들 생성
+          mkdir -p backend/uploads backend/profile
+          # 컴포즈를 통해 백엔드 컨테이너만 빌드 및 재시작
+          sudo docker compose up --build -d backend

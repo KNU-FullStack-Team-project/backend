@@ -1,6 +1,8 @@
 package org.team12.teamproject.service;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.mail.MailException;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Service;
@@ -9,6 +11,7 @@ import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class EmailService {
@@ -37,7 +40,13 @@ public class EmailService {
                 "인증번호는 5분 동안 유효합니다.\n\n" +
                 "감사합니다."
         );
-        mailSender.send(message);
+        try {
+            mailSender.send(message);
+            log.info("회원가입 인증 메일 발송 성공: {}", email);
+        } catch (MailException e) {
+            log.error("회원가입 인증 메일 발송 실패: {}", email, e);
+            throw new RuntimeException("메일 발송 중 오류가 발생했습니다.");
+        }
     }
 
     // 비밀번호 재설정 인증 메일 발송
@@ -51,7 +60,13 @@ public class EmailService {
                 "인증번호는 5분 동안 유효합니다.\n\n" +
                 "감사합니다."
         );
-        mailSender.send(message);
+        try {
+            mailSender.send(message);
+            log.info("비밀번호 재설정 메일 발송 성공: {}", email);
+        } catch (MailException e) {
+            log.error("비밀번호 재설정 메일 발송 실패: {}", email, e);
+            throw new RuntimeException("메일 발송 중 오류가 발생했습니다.");
+        }
     }
 
     // 인증번호 저장 + 만료시간 5분 설정

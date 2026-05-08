@@ -79,6 +79,23 @@ public class CompetitionController {
         }
     }
 
+    @PatchMapping("/{competitionId}/finalize")
+    public ResponseEntity<?> finalizeCompetitionResult(
+            @PathVariable Long competitionId,
+            Authentication authentication
+    ) {
+        try {
+            if (!isAdmin(authentication)) {
+                return ResponseEntity.status(403).body("관리자만 대회 결과를 확정할 수 있습니다.");
+            }
+
+            competitionService.finalizeCompetitionResult(competitionId);
+            return ResponseEntity.ok("대회 결과 확정 및 뱃지 지급 처리 완료");
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
     @PatchMapping("/{competitionId}/visibility")
     public ResponseEntity<?> updateCompetitionVisibility(
             @PathVariable Long competitionId,

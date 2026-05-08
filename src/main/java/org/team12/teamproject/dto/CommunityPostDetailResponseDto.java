@@ -16,6 +16,8 @@ public class CommunityPostDetailResponseDto {
     private String stockName;
     private Long userId;
     private String nickname;
+    private Integer level;
+    private String levelIconUrl;
     private Boolean hasBoughtStock;
     private String title;
     private String content;
@@ -23,6 +25,8 @@ public class CommunityPostDetailResponseDto {
     private Integer likeCount;
     private Integer dislikeCount;
     private Integer viewCount;
+    private String status;
+    private LocalDateTime deletedAt;
     private LocalDateTime createdAt;
 
     private Boolean likedByCurrentUser;

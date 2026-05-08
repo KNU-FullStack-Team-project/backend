@@ -7,6 +7,7 @@ import org.team12.teamproject.dto.PageResponseDto;
 import org.team12.teamproject.dto.StockResponseDto;
 import org.team12.teamproject.service.StockService;
 import lombok.RequiredArgsConstructor;
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/stocks")
@@ -19,16 +20,20 @@ import lombok.RequiredArgsConstructor;
 public class StockController {
 
     private final StockService stockService;
-
+    private final org.springframework.data.redis.core.StringRedisTemplate redisTemplate;
+    private final org.team12.teamproject.service.TechnicalIndicatorService indicatorService;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
     // =========================================================
     // 1. 리스트 페이징 조회 (이 부분이 추가되었습니다!)
     // =========================================================
     @GetMapping
     public ResponseEntity<PageResponseDto<StockResponseDto>> getStockList(
             @RequestParam(name = "page", defaultValue = "1") int page,
-            @RequestParam(name = "size", defaultValue = "20") int size
+            @RequestParam(name = "size", defaultValue = "20") int size,
+            @RequestParam(name = "industry", required = false) String industry,
+            @RequestParam(name = "stockType", required = false) String stockType
     ) {
-        PageResponseDto<StockResponseDto> response = stockService.getStockList(page, size);
+        PageResponseDto<StockResponseDto> response = stockService.getStockList(page, size, industry, stockType);
         return ResponseEntity.ok(response);
     }
 
@@ -56,11 +61,44 @@ public class StockController {
     }
 
     // =========================================================
-    // 4. 종목 검색 (추가됨)
+    // 4. 종목 진단 조회 (추가됨)
+    // =========================================================
+    @GetMapping("/{symbol}/diagnosis")
+    public ResponseEntity<?> getStockDiagnosis(@PathVariable(name = "symbol") String symbol) {
+        try {
+            String cacheKey = "stock:diagnosis:" + symbol;
+            String cachedData = redisTemplate.opsForValue().get(cacheKey);
+            
+            if (cachedData != null) {
+                return ResponseEntity.ok(objectMapper.readValue(cachedData, org.team12.teamproject.dto.StockDiagnosisDto.class));
+            }
+            
+            // 캐시 없으면 실시간 계산
+            java.util.List<org.team12.teamproject.dto.StockCandleDto> candles = stockService.getStockHistory(symbol, "D");
+            if (candles == null || candles.isEmpty()) {
+                return ResponseEntity.ok(org.team12.teamproject.dto.StockDiagnosisDto.builder().symbol(symbol).signal("INSUFFICIENT_DATA").build());
+            }
+            
+            org.team12.teamproject.dto.StockDiagnosisDto diagnosis = indicatorService.diagnose(symbol, candles);
+            redisTemplate.opsForValue().set(cacheKey, objectMapper.writeValueAsString(diagnosis), java.time.Duration.ofMinutes(10));
+            return ResponseEntity.ok(diagnosis);
+        } catch (Exception e) {
+            return ResponseEntity.status(org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(java.util.Map.of("error", "진단 중 오류 발생: " + e.getMessage()));
+        }
+    }
+
+    // =========================================================
+    // 5. 종목 검색 (추가됨)
     // =========================================================
     @GetMapping("/search")
     public ResponseEntity<?> searchStocks(@RequestParam(name = "keyword") String keyword) {
         return ResponseEntity.ok(stockService.searchStocks(keyword));
+    }
+
+    @GetMapping("/industries")
+    public ResponseEntity<List<String>> getAllIndustries() {
+        return ResponseEntity.ok(stockService.getAllIndustries());
     }
 
     // =========================================================

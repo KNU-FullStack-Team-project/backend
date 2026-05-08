@@ -2,10 +2,12 @@ package org.team12.teamproject.service;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import java.util.concurrent.TimeUnit;
 import org.team12.teamproject.dto.AdminUpdateUserRequestDto;
 import org.team12.teamproject.dto.ChangeNicknameRequestDto;
 import org.team12.teamproject.dto.ChangePasswordRequestDto;
@@ -34,7 +36,9 @@ import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -46,6 +50,11 @@ public class UserService {
 
     private static final int CAPTCHA_THRESHOLD = 5;
     private static final String SOCIAL_GOOGLE_PASSWORD_MARKER = "{social}google";
+    private static final int MAX_NICKNAME_LENGTH = 12;
+    private static final String NICKNAME_PATTERN = "^[A-Za-z0-9가-힣]{1,12}$";
+    private static final String NICKNAME_RULE_MESSAGE = "닉네임은 12자 이하의 한글, 영문, 숫자만 사용할 수 있습니다.";
+    private static final DateTimeFormatter SUSPENSION_TIME_FORMAT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final UserRepository userRepository;
     private final AccountRepository accountRepository;
@@ -53,15 +62,22 @@ public class UserService {
     private final PasswordEncoder passwordEncoder;
     private final JdbcTemplate jdbcTemplate;
     private final JwtUtil jwtUtil;
+    private final StringRedisTemplate redisTemplate;
     private final RecaptchaService recaptchaService;
     private final UserActivityAuditLogger userActivityAuditLogger;
+    private final AdminActionAuditLogger adminActionAuditLogger;
     private final GoogleTokenVerifierService googleTokenVerifierService;
 
     private final Map<String, Integer> loginFailureCounts = new ConcurrentHashMap<>();
+    private static final String RT_KEY_PREFIX = "RT:";
+    private static final long REFRESH_TOKEN_VALIDITY_DAYS = 7;
 
     @Transactional
     public String signup(SignupRequestDto dto) {
         String email = dto.getEmail() != null ? dto.getEmail().trim() : "";
+        String nickname = normalizeNickname(dto.getNickname());
+        String nicknameValidationMessage = validateNickname(nickname);
+        if (nicknameValidationMessage != null) return nicknameValidationMessage;
         if (email.isEmpty()) return "이메일을 입력해주세요.";
 
         if (!emailService.isVerified(email)) {
@@ -75,15 +91,15 @@ public class UserService {
         }
 
         if (existingUser != null && "QUIT".equalsIgnoreCase(existingUser.getStatus())) {
-            if (!dto.getNickname().equals(existingUser.getNickname())
-                    && userRepository.countByNickname(dto.getNickname()) > 0) {
+            if (!nickname.equals(existingUser.getNickname())
+                    && userRepository.countByNickname(nickname) > 0) {
                 return "이미 사용 중인 닉네임입니다.";
             }
 
             resetUserAssets(existingUser.getId());
 
             existingUser.setPasswordHash(passwordEncoder.encode(dto.getPassword()));
-            existingUser.setNickname(dto.getNickname());
+            existingUser.setNickname(nickname);
             existingUser.setRole("USER");
             existingUser.setStatus("REJOINED");
             existingUser.setMarketingConsent(dto.getMarketingConsent() != null && dto.getMarketingConsent());
@@ -97,11 +113,12 @@ public class UserService {
 
             createDefaultAccount(existingUser);
             emailService.clearVerification(dto.getEmail());
+            logAccountEvent(existingUser, "ACCOUNT_REJOIN", "provider=LOCAL");
 
             return "재가입 완료";
         }
 
-        if (userRepository.countByNickname(dto.getNickname()) > 0) {
+        if (userRepository.countByNickname(nickname) > 0) {
             return "이미 사용 중인 닉네임입니다.";
         }
 
@@ -110,7 +127,7 @@ public class UserService {
         User user = User.builder()
                 .email(email)
                 .passwordHash(encodedPassword)
-                .nickname(dto.getNickname())
+                .nickname(nickname)
                 .profileImageUrl(null)
                 .role("USER")
                 .status("ACTIVE")
@@ -123,6 +140,7 @@ public class UserService {
         userRepository.save(user);
         createDefaultAccount(user);
         emailService.clearVerification(dto.getEmail());
+        logAccountEvent(user, "ACCOUNT_SIGNUP", "provider=LOCAL");
 
         return "회원가입 완료";
     }
@@ -142,6 +160,10 @@ public class UserService {
 
     private void resetUserAssets(Long userId) {
         jdbcTemplate.update("DELETE FROM competition_participants WHERE user_id = ?", userId);
+        jdbcTemplate.update(
+                "DELETE FROM portfolio_snapshot WHERE account_id IN (SELECT account_id FROM accounts WHERE user_id = ?)",
+                userId
+        );
         jdbcTemplate.update(
                 "DELETE FROM orders WHERE account_id IN (SELECT account_id FROM accounts WHERE user_id = ?)",
                 userId
@@ -164,6 +186,8 @@ public class UserService {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> buildLoginFailedException(normalizedEmail));
 
+        releaseExpiredSuspension(user);
+
         if (!matchesPassword(dto.getPassword(), user.getPasswordHash())) {
             throw buildLoginFailedException(normalizedEmail);
         }
@@ -173,7 +197,7 @@ public class UserService {
         }
 
         if ("SUSPENDED".equalsIgnoreCase(user.getStatus())) {
-            throw new LoginFailedException("정지된 계정입니다.", isCaptchaRequired(normalizedEmail));
+            throw new LoginFailedException(buildSuspensionMessage(user), isCaptchaRequired(normalizedEmail));
         }
 
         if (!isLoginAllowedStatus(user.getStatus())) {
@@ -186,7 +210,17 @@ public class UserService {
         user.setUpdatedAt(LocalDateTime.now());
         userRepository.save(user);
 
-        String token = jwtUtil.generateToken(user.getEmail(), user.getRole());
+        String accessToken = jwtUtil.generateAccessToken(user.getEmail(), user.getRole());
+        String refreshToken = jwtUtil.generateRefreshToken(user.getEmail());
+
+        // Refresh Token Redis 저장
+        redisTemplate.opsForValue().set(
+                RT_KEY_PREFIX + user.getEmail(),
+                refreshToken,
+                REFRESH_TOKEN_VALIDITY_DAYS,
+                TimeUnit.DAYS
+        );
+
         List<Account> accounts = accountRepository.findByUserId(user.getId());
         Long accountId = accounts.isEmpty() ? null : accounts.get(0).getId();
 
@@ -206,7 +240,8 @@ public class UserService {
                 normalizeProfileImageUrl(user.getProfileImageUrl()),
                 user.getRole(),
                 "로그인 성공",
-                token,
+                accessToken,
+                refreshToken,
                 accountId,
                 false,
                 isSocialPasswordMarker(user.getPasswordHash())
@@ -236,6 +271,8 @@ public class UserService {
             );
         }
 
+        releaseExpiredSuspension(user);
+
         if ("QUIT".equalsIgnoreCase(user.getStatus())) {
             return new SocialLoginResultDto(
                     true,
@@ -248,7 +285,7 @@ public class UserService {
         }
 
         if ("SUSPENDED".equalsIgnoreCase(user.getStatus())) {
-            throw new RuntimeException("정지된 계정은 로그인할 수 없습니다.");
+            throw new RuntimeException(buildSuspensionMessage(user));
         }
 
         if (!isLoginAllowedStatus(user.getStatus())) {
@@ -285,10 +322,8 @@ public class UserService {
             throw new RuntimeException("Google account email is missing.");
         }
 
-        String nickname = dto.getNickname() != null ? dto.getNickname().trim() : "";
-        if (nickname.isEmpty()) {
-            throw new RuntimeException("닉네임을 입력해 주세요.");
-        }
+        String nickname = normalizeNickname(dto.getNickname());
+        validateNicknameOrThrow(nickname);
 
         User existingUser = userRepository.findByEmail(email).orElse(null);
         if (existingUser != null && !"QUIT".equalsIgnoreCase(existingUser.getStatus())) {
@@ -316,6 +351,7 @@ public class UserService {
             saveSocialProfileImage(existingUser, extractGooglePicture(payload));
             userRepository.save(existingUser);
             createDefaultAccount(existingUser);
+            logAccountEvent(existingUser, "ACCOUNT_REJOIN", "provider=GOOGLE");
 
             return buildLoginResponse(existingUser, "다시 돌아오신 것을 환영합니다.");
         }
@@ -325,6 +361,7 @@ public class UserService {
                 nickname,
                 dto.getMarketingConsent() != null && dto.getMarketingConsent()
         );
+        logAccountEvent(user, "ACCOUNT_SIGNUP", "provider=GOOGLE");
         return buildLoginResponse(user, "간편회원가입 및 로그인 성공");
     }
 
@@ -342,8 +379,10 @@ public class UserService {
     }
 
     public String checkNickname(String nickname, String email) {
-        String cleanNickname = nickname != null ? nickname.trim() : "";
+        String cleanNickname = normalizeNickname(nickname);
         String cleanEmail = email != null ? email.trim() : "";
+        String nicknameValidationMessage = validateNickname(cleanNickname);
+        if (nicknameValidationMessage != null) return nicknameValidationMessage;
 
         if (cleanNickname.isEmpty()) {
             return "닉네임을 입력해주세요.";
@@ -451,7 +490,8 @@ public class UserService {
 
     public UserProfileResponseDto changeNickname(ChangeNicknameRequestDto dto) {
         String email = dto.getEmail() != null ? dto.getEmail().trim() : "";
-        String nickname = dto.getNickname() != null ? dto.getNickname().trim() : "";
+        String nickname = normalizeNickname(dto.getNickname());
+        validateNicknameOrThrow(nickname);
 
         if (email.isEmpty()) {
             throw new RuntimeException("회원 정보를 찾을 수 없습니다.");
@@ -468,9 +508,21 @@ public class UserService {
             throw new RuntimeException("이미 사용 중인 닉네임입니다.");
         }
 
+        String previousNickname = user.getNickname();
         user.setNickname(nickname);
         user.setUpdatedAt(LocalDateTime.now());
         userRepository.save(user);
+
+        if (!nickname.equals(previousNickname)) {
+            userActivityAuditLogger.log(
+                    user.getId(),
+                    user.getEmail(),
+                    "PROFILE_NICKNAME_UPDATE",
+                    "USER",
+                    String.valueOf(user.getId()),
+                    "before=" + previousNickname + ", after=" + nickname
+            );
+        }
 
         return toUserProfile(user);
     }
@@ -511,15 +563,27 @@ public class UserService {
         return "비밀번호가 재설정되었습니다.";
     }
 
+    @Transactional
     public List<UserProfileResponseDto> getUserList() {
         return userRepository.findAll().stream()
+                .peek(this::releaseExpiredSuspension)
                 .map(this::toUserProfile)
                 .toList();
     }
 
-    public UserProfileResponseDto updateAdminUser(Long userId, AdminUpdateUserRequestDto dto) {
+    @Transactional
+    public UserProfileResponseDto updateAdminUser(Long userId, AdminUpdateUserRequestDto dto, String adminEmail) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다."));
+
+        User admin = userRepository.findByEmail(adminEmail)
+                .orElseThrow(() -> new RuntimeException("?ъ슜?먮? 李얠쓣 ???놁뒿?덈떎."));
+
+        releaseExpiredSuspension(user);
+        String previousStatus = user.getStatus();
+        String previousRole = user.getRole();
+        String previousSuspensionReason = user.getSuspensionReason();
+        LocalDateTime previousSuspendedUntil = user.getSuspendedUntil();
 
         if (!"USER".equals(dto.getRole()) && !"ADMIN".equals(dto.getRole())) {
             throw new RuntimeException("권한 값이 올바르지 않습니다.");
@@ -532,19 +596,52 @@ public class UserService {
         }
 
         user.setRole(dto.getRole());
-        user.setStatus(dto.getStatus());
-        user.setSuspendedAt("SUSPENDED".equals(dto.getStatus()) ? LocalDateTime.now() : null);
+        applyUserStatus(user, dto);
         user.setUpdatedAt(LocalDateTime.now());
 
-        return toUserProfile(userRepository.save(user));
+        User savedUser = userRepository.save(user);
+        logSuspensionChange(savedUser, previousStatus, dto);
+        adminActionAuditLogger.log(
+                admin.getId(),
+                admin.getEmail(),
+                "USER_UPDATE",
+                "USER",
+                String.valueOf(savedUser.getId()),
+                "beforeRole=" + previousRole
+                        + "; afterRole=" + savedUser.getRole()
+                        + "; beforeStatus=" + previousStatus
+                        + "; afterStatus=" + savedUser.getStatus()
+                        + "; beforeSuspendedUntil=" + safeDateTime(previousSuspendedUntil)
+                        + "; afterSuspendedUntil=" + safeDateTime(savedUser.getSuspendedUntil())
+                        + "; beforeSuspensionReason=" + safeLogValue(previousSuspensionReason)
+                        + "; afterSuspensionReason=" + safeLogValue(savedUser.getSuspensionReason())
+        );
+        return toUserProfile(savedUser);
     }
 
+    @Transactional
     public String withdraw(WithdrawUserRequestDto dto) {
         String email = dto.getEmail() != null ? dto.getEmail().trim() : "";
+        String reason = dto.getReason() != null ? dto.getReason().trim() : "";
+
+        if (reason.isBlank()) {
+            throw new RuntimeException("회원 탈퇴 사유를 입력해 주세요.");
+        }
+
+        if (reason.length() > 500) {
+            throw new RuntimeException("회원 탈퇴 사유는 500자 이하로 입력해 주세요.");
+        }
+
+        if (!Boolean.TRUE.equals(dto.getDeletionAgreed())) {
+            throw new RuntimeException("계정 영구 삭제 및 익명화에 동의해야 회원탈퇴를 진행할 수 있습니다.");
+        }
+
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new RuntimeException("회원정보가 일치하지 않습니다."));
 
+        logAccountEvent(user, "ACCOUNT_WITHDRAW", "reason=" + sanitizeAuditDetail(reason));
         deleteProfileImage(user.getId());
+        resetUserAssets(user.getId());
 
         user.setProfileImageUrl(null);
         user.setNickname(generateWithdrawnNickname(user));
@@ -554,6 +651,25 @@ public class UserService {
         userRepository.save(user);
 
         return "회원 탈퇴가 완료되었습니다.";
+    }
+
+    private void logAccountEvent(User user, String action, String detail) {
+        userActivityAuditLogger.log(
+                user.getId(),
+                user.getEmail(),
+                action,
+                "USER",
+                String.valueOf(user.getId()),
+                detail
+        );
+    }
+
+    private String sanitizeAuditDetail(String value) {
+        if (value == null) {
+            return "-";
+        }
+
+        return value.replace("\r", " ").replace("\n", " ").trim();
     }
 
     private boolean isEmailInUseByActiveUser(String email) {
@@ -584,6 +700,29 @@ public class UserService {
         boolean hasSpecial = value.chars().anyMatch(ch -> !Character.isLetterOrDigit(ch));
 
         return hasLetter && hasDigit && hasSpecial;
+    }
+
+    private String normalizeNickname(String nickname) {
+        return nickname != null ? nickname.trim() : "";
+    }
+
+    private String validateNickname(String nickname) {
+        if (nickname == null || nickname.isEmpty()) {
+            return "닉네임을 입력해주세요.";
+        }
+
+        if (nickname.length() > MAX_NICKNAME_LENGTH || !nickname.matches(NICKNAME_PATTERN)) {
+            return NICKNAME_RULE_MESSAGE;
+        }
+
+        return null;
+    }
+
+    private void validateNicknameOrThrow(String nickname) {
+        String validationMessage = validateNickname(nickname);
+        if (validationMessage != null) {
+            throw new RuntimeException(validationMessage);
+        }
     }
 
     private LoginFailedException buildLoginFailedException(String normalizedEmail) {
@@ -652,7 +791,7 @@ public class UserService {
     }
 
     private String generateWithdrawnNickname(User user) {
-        String base = "withdrawn_" + (user.getId() != null ? user.getId() : "user");
+        String base = "DeletedUser" + (user.getId() != null ? user.getId() : "user");
         String candidate = base;
         int suffix = 1;
 
@@ -712,10 +851,126 @@ public class UserService {
                 .socialLogin(isSocialPasswordMarker(user.getPasswordHash()))
                 .role(user.getRole())
                 .status(user.getStatus())
+                .suspendedUntil(user.getSuspendedUntil() != null ? user.getSuspendedUntil().toString() : null)
+                .suspensionReason(user.getSuspensionReason())
                 .createdAt(user.getCreatedAt() != null ? user.getCreatedAt().toString() : null)
                 .accountId(accountId)
                 .accountCount(accounts.size())
                 .build();
+    }
+
+    private void applyUserStatus(User user, AdminUpdateUserRequestDto dto) {
+        if (!"SUSPENDED".equals(dto.getStatus())) {
+            user.setStatus(dto.getStatus());
+            user.setSuspendedAt(null);
+            user.setSuspendedUntil(null);
+            user.setSuspensionReason(null);
+            return;
+        }
+
+        boolean newlySuspended = !"SUSPENDED".equalsIgnoreCase(user.getStatus());
+        Double suspensionHours = dto.getSuspensionHours();
+
+        if (newlySuspended && suspensionHours == null) {
+            throw new RuntimeException("정지 기간을 시간 단위로 입력해주세요.");
+        }
+
+        user.setStatus("SUSPENDED");
+
+        if (suspensionHours == null) {
+            return;
+        }
+
+        if (!suspensionHours.equals(-1.0) && suspensionHours <= 0) {
+            throw new RuntimeException("정지 기간은 -1 또는 0이 아닌 양수 시간으로 입력해주세요.");
+        }
+
+        String reason = dto.getSuspensionReason() != null ? dto.getSuspensionReason().trim() : "";
+        if (reason.isBlank()) {
+            throw new RuntimeException("정지 사유를 입력해주세요.");
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        user.setSuspendedAt(now);
+        user.setSuspendedUntil(suspensionHours.equals(-1.0)
+                ? null
+                : now.plus(Duration.ofSeconds(Math.max(1, Math.round(suspensionHours * 3600)))));
+        user.setSuspensionReason(reason);
+    }
+
+    private void releaseExpiredSuspension(User user) {
+        if (!"SUSPENDED".equalsIgnoreCase(user.getStatus())) {
+            return;
+        }
+        if (user.getSuspendedUntil() == null || user.getSuspendedUntil().isAfter(LocalDateTime.now())) {
+            return;
+        }
+
+        user.setStatus("ACTIVE");
+        user.setSuspendedAt(null);
+        user.setSuspendedUntil(null);
+        user.setSuspensionReason(null);
+        user.setUpdatedAt(LocalDateTime.now());
+        userActivityAuditLogger.log(
+                user.getId(),
+                user.getEmail(),
+                "SUSPENSION_RELEASE",
+                "USER",
+                String.valueOf(user.getId()),
+                "type=AUTO"
+        );
+    }
+
+    private String buildSuspensionMessage(User user) {
+        String reason = user.getSuspensionReason() != null && !user.getSuspensionReason().isBlank()
+                ? user.getSuspensionReason()
+                : "관리자에 의해 정지되었습니다.";
+        String releaseTime = user.getSuspendedUntil() != null
+                ? user.getSuspendedUntil().format(SUSPENSION_TIME_FORMAT)
+                : "영구 정지";
+        return "정지된 계정입니다. 사유: " + reason + " / 해제시간: " + releaseTime;
+    }
+
+    private void logSuspensionChange(User user, String previousStatus, AdminUpdateUserRequestDto dto) {
+        if ("SUSPENDED".equals(dto.getStatus())) {
+            String releaseTime = user.getSuspendedUntil() != null
+                    ? user.getSuspendedUntil().format(SUSPENSION_TIME_FORMAT)
+                    : "PERMANENT";
+            userActivityAuditLogger.log(
+                    user.getId(),
+                    user.getEmail(),
+                    "SUSPENSION_SET",
+                    "USER",
+                    String.valueOf(user.getId()),
+                    "hours=" + dto.getSuspensionHours()
+                            + "; until=" + releaseTime
+                            + "; reason=" + user.getSuspensionReason()
+            );
+            return;
+        }
+
+        if ("SUSPENDED".equalsIgnoreCase(previousStatus) && !"SUSPENDED".equals(dto.getStatus())) {
+            userActivityAuditLogger.log(
+                    user.getId(),
+                    user.getEmail(),
+                    "SUSPENSION_RELEASE",
+                    "USER",
+                    String.valueOf(user.getId()),
+                    "type=MANUAL; nextStatus=" + dto.getStatus()
+            );
+        }
+    }
+
+    private String safeDateTime(LocalDateTime value) {
+        return value == null ? "-" : value.format(SUSPENSION_TIME_FORMAT);
+    }
+
+    private String safeLogValue(String value) {
+        if (value == null || value.isBlank()) {
+            return "-";
+        }
+        String normalized = value.replaceAll("\\s+", " ").trim();
+        return normalized.length() <= 120 ? normalized : normalized.substring(0, 120) + "...";
     }
 
     private Path getProfileDirectory() {
@@ -739,14 +994,25 @@ public class UserService {
         }
     }
 
-    public String refreshToken(String email) {
+    public String refreshToken(String refreshToken) {
+        if (refreshToken == null || !jwtUtil.validateToken(refreshToken)) {
+            throw new RuntimeException("유효하지 않은 리프레시 토큰입니다.");
+        }
+        String email = jwtUtil.getEmailFromToken(refreshToken);
+        String savedToken = redisTemplate.opsForValue().get(RT_KEY_PREFIX + email);
+        if (savedToken == null || !savedToken.equals(refreshToken)) {
+            throw new RuntimeException("만료되었거나 유효하지 않은 세션입니다.");
+        }
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다."));
-        return jwtUtil.generateToken(user.getEmail(), user.getRole());
+        return jwtUtil.generateAccessToken(user.getEmail(), user.getRole());
     }
     public void logout(String email) {
+        if (email != null) {
+            redisTemplate.delete(RT_KEY_PREFIX + email);
+        }
         User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new RuntimeException("?ъ슜?먮? 李얠쓣 ???놁뒿?덈떎."));
+                .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다."));
 
         userActivityAuditLogger.log(
                 user.getId(),
@@ -806,7 +1072,17 @@ public class UserService {
     private LoginResponseDto buildLoginResponse(User user, String message) {
         List<Account> accounts = accountRepository.findByUserId(user.getId());
         Long accountId = accounts.isEmpty() ? null : accounts.get(0).getId();
-        String token = jwtUtil.generateToken(user.getEmail(), user.getRole());
+        
+        String accessToken = jwtUtil.generateAccessToken(user.getEmail(), user.getRole());
+        String refreshToken = jwtUtil.generateRefreshToken(user.getEmail());
+
+        // Refresh Token Redis 저장
+        redisTemplate.opsForValue().set(
+                RT_KEY_PREFIX + user.getEmail(),
+                refreshToken,
+                REFRESH_TOKEN_VALIDITY_DAYS,
+                TimeUnit.DAYS
+        );
 
         userActivityAuditLogger.log(
                 user.getId(),
@@ -824,7 +1100,8 @@ public class UserService {
                 normalizeProfileImageUrl(user.getProfileImageUrl()),
                 user.getRole(),
                 message,
-                token,
+                accessToken,
+                refreshToken,
                 accountId,
                 false,
                 isSocialPasswordMarker(user.getPasswordHash())

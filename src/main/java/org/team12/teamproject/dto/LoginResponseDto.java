@@ -1,5 +1,6 @@
 package org.team12.teamproject.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -16,7 +17,13 @@ public class LoginResponseDto {
     private String profileImageUrl;
     private String role;
     private String message;
+    
+    @JsonIgnore
     private String token;
+    
+    @JsonIgnore
+    private String refreshToken;
+    
     private Long accountId;
     private Boolean captchaRequired;
     private Boolean socialLogin;

@@ -13,6 +13,7 @@ import org.team12.teamproject.entity.Holding;
 import org.team12.teamproject.entity.NotificationType;
 import org.team12.teamproject.entity.Order;
 import org.team12.teamproject.entity.Stock;
+import org.team12.teamproject.entity.User;
 import org.team12.teamproject.event.PriceUpdateEvent;
 import org.team12.teamproject.repository.AccountRepository;
 import org.team12.teamproject.repository.HoldingRepository;
@@ -38,6 +39,7 @@ public class OrderService {
     private final StockService stockService;
     private final StringRedisTemplate redisTemplate;
     private final NotificationService notificationService;
+    private final UserActivityAuditLogger userActivityAuditLogger;
 
     private static final String ORDER_QUEUE_KEY = "orders:queue";
 
@@ -353,6 +355,32 @@ public class OrderService {
 
         notificationService.sendNotification(order.getAccount().getUser(), title, message,
                 NotificationType.ORDER_COMPLETED);
+
+        logOrderActivity(order);
+    }
+
+    private void logOrderActivity(Order order) {
+        User user = order.getAccount().getUser();
+        Stock stock = order.getStock();
+        String action = "BUY".equals(order.getOrderSide()) ? "ORDER_BUY" : "ORDER_SELL";
+        BigDecimal totalAmount = order.getPrice().multiply(BigDecimal.valueOf(order.getQuantity()));
+        String detail = String.format(
+                "stockName=%s, stockCode=%s, quantity=%d, price=%s, totalAmount=%s",
+                stock.getStockName(),
+                stock.getStockCode(),
+                order.getQuantity(),
+                order.getPrice().setScale(0, RoundingMode.HALF_UP).toPlainString(),
+                totalAmount.setScale(0, RoundingMode.HALF_UP).toPlainString()
+        );
+
+        userActivityAuditLogger.log(
+                user.getId(),
+                user.getEmail(),
+                action,
+                "ORDER",
+                String.valueOf(order.getId()),
+                detail
+        );
     }
 
     @Transactional(readOnly = true)

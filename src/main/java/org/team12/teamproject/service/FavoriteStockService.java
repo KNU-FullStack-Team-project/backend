@@ -36,10 +36,17 @@ public class FavoriteStockService {
     }
 
     @Transactional
-    public void addFavorite(Long userId, String symbol) {
+    public void addFavorite(Long userId, String symbol, String buyAlertLevel, String sellAlertLevel) {
         if (favoriteStockRepository.countByUserAndSymbol(userId, symbol) == 0) {
-            favoriteStockRepository.addFavoriteNative(userId, symbol);
+            String finalBuy = (buyAlertLevel != null && !buyAlertLevel.isEmpty()) ? buyAlertLevel : "NONE";
+            String finalSell = (sellAlertLevel != null && !sellAlertLevel.isEmpty()) ? sellAlertLevel : "NONE";
+            favoriteStockRepository.addFavoriteNative(userId, symbol, finalBuy, finalSell);
         }
+    }
+
+    @Transactional
+    public void updateFavoriteAlertLevel(Long userId, String symbol, String buyAlertLevel, String sellAlertLevel) {
+        favoriteStockRepository.updateFavoriteAlertLevelNative(userId, symbol, buyAlertLevel, sellAlertLevel);
     }
 
     @Transactional
