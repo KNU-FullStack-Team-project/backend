@@ -35,6 +35,12 @@ public class Comment implements Serializable {
     @Column(name = "content", nullable = false, length = 4000)
     private String content;
 
+    @Column(name = "like_count", nullable = false)
+    private Integer likeCount;
+
+    @Column(name = "dislike_count", nullable = false)
+    private Integer dislikeCount;
+
     @Column(name = "status", nullable = false, length = 20)
     private String status;
 
@@ -56,5 +62,13 @@ public class Comment implements Serializable {
         this.status = "DELETED";
         this.deletedAt = LocalDateTime.now();
         this.updatedAt = LocalDateTime.now();
+    }
+
+    public void increaseLikeCount() {
+        this.likeCount = (this.likeCount == null ? 0 : this.likeCount) + 1;
+    }
+
+    public void increaseDislikeCount() {
+        this.dislikeCount = (this.dislikeCount == null ? 0 : this.dislikeCount) + 1;
     }
 }

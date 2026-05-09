@@ -136,6 +136,7 @@ public class CompetitionService {
         String competitionSql = """
                 SELECT title,
                        initial_seed_money,
+                       max_participants,
                        is_public,
                        CASE
                            WHEN status = 'CANCELED' THEN 'CANCELED'
@@ -157,6 +158,9 @@ public class CompetitionService {
 
         String title = (String) competition.get("TITLE");
         BigDecimal initialSeedMoney = (BigDecimal) competition.get("INITIAL_SEED_MONEY");
+        Integer maxParticipants = competition.get("MAX_PARTICIPANTS") == null
+                ? null
+                : ((Number) competition.get("MAX_PARTICIPANTS")).intValue();
         String status = (String) competition.get("DISPLAY_STATUS");
         Integer isPublic = competition.get("IS_PUBLIC") == null
                 ? 1
@@ -176,6 +180,14 @@ public class CompetitionService {
 
         if ("ENDED".equalsIgnoreCase(status)) {
             throw new RuntimeException("종료된 대회에는 참가할 수 없습니다.");
+        }
+
+        if (maxParticipants != null) {
+            Integer joinedCount = getJoinedParticipantCount(competitionId);
+
+            if (joinedCount != null && joinedCount >= maxParticipants) {
+                throw new RuntimeException("대회 최대 참가 인원이 마감되었습니다.");
+            }
         }
 
         Long accountId = jdbcTemplate.queryForObject(
