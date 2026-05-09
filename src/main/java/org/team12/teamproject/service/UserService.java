@@ -820,7 +820,7 @@ public class UserService {
 
                 Path profileImagePath = profileDirectory.resolve(user.getId() + ".png");
                 ImageIO.write(profileImage, "png", profileImagePath.toFile());
-                user.setProfileImageUrl("/profile/" + user.getId() + ".png");
+                user.setProfileImageUrl("/api/profile/" + user.getId() + ".png");
                 user.setUpdatedAt(LocalDateTime.now());
             }
         } catch (IOException e) {
